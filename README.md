@@ -81,6 +81,19 @@ ygonlp export --format json
 
 収集データは世代別のdata fileとして保存し、固定パスのmetadataを有効キャッシュのコミットポインタとして扱います。metadataが参照するdata fileだけを有効とみなし、保存失敗時も既存の正常キャッシュを維持します。失敗時の未参照data fileは可能な限り削除し、残存しても有効キャッシュとしては扱いません。詳細仕様はIssue #1を参照してください。
 
+## 前処理方針
+
+前処理はIssue #1のraw metadataを入力として検証済みraw dataを解決し、1カード1recordのJSONLへ正規化します。全カードを保持したうえで、通常モンスターのフレーバーテキスト、Token、Skill Cardなどを `is_effect_text_target` と `exclusion_reason` で初期分析から区別します。
+
+`text_raw` は原文を保持し、`text_normalized` では改行コードのLF統一と外側空白の除去だけを行います。Unicode normalization、句読点削除、小文字化、定型句の置換は行いません。時系列の第一候補は `misc_info` の `tcg_date` であり、欠損や不正な日付を推測・補完しません。
+
+詳細なrecord schema、日付・重複・エラー方針、CLI、テスト計画は[前処理仕様](docs/preprocessing-spec.md)を参照してください。
+
+```text
+ygonlp preprocess --input-metadata <raw-metadata-json> --output <output-directory> --dry-run
+ygonlp preprocess --input-metadata <raw-metadata-json> --output <output-directory>
+```
+
 ## 初期リポジトリ構成
 
 ```text
