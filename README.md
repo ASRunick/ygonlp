@@ -94,6 +94,17 @@ ygonlp preprocess --input-metadata <raw-metadata-json> --output <output-director
 ygonlp preprocess --input-metadata <raw-metadata-json> --output <output-directory>
 ```
 
+## 基本テキスト指標
+
+`measure` は前処理済みmetadataを入力境界として検証し、初期分析対象カードだけの決定論的なLength MetricsをJSONLで生成します。初期指標はUnicode code point数の `character_count`、Unicode-awareな固定regexによる `word_count`、終端記号分割による `sentence_count` です。Surface Complexity Metrics、Structural Metrics、集計はこの段階のスコープ外です。
+
+```text
+ygonlp measure --input-metadata <preprocessing-metadata-json> --output <output-directory> --dry-run
+ygonlp measure --input-metadata <preprocessing-metadata-json> --output <output-directory>
+```
+
+`--dry-run` は前処理metadataとJSONLを読み取り・検証しますが、出力や一時ファイルを作成せず、API通信も行いません。詳細な指標定義、空出力、保存・検証方針は[測定仕様](docs/measurement-spec.md)を参照してください。
+
 ## 初期リポジトリ構成
 
 ```text

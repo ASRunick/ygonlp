@@ -5,6 +5,7 @@ import json
 import pytest
 
 from ygonlp.cli import main
+from ygonlp.preprocess import preprocess
 
 
 def raw_source(tmp_path: Path) -> Path:
@@ -28,7 +29,7 @@ def test_root_help(capsys):
         main(["--help"])
     assert exc.value.code == 0
     output = capsys.readouterr().out
-    assert "collect" in output and "preprocess" in output
+    assert "collect" in output and "preprocess" in output and "measure" in output
 
 
 def test_collect_help(capsys):
@@ -109,3 +110,42 @@ def test_preprocess_failure_returns_stderr(monkeypatch, tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "前処理失敗" in captured.err
+
+
+def test_measure_help_and_required_input_metadata(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["measure", "--help"])
+    assert exc.value.code == 0
+    assert "--input-metadata" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exc:
+        main(["measure", "--output", "out", "--dry-run"])
+    assert exc.value.code != 0
+    assert "--input-metadata" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("force", "expected_force"), [(False, "no"), (True, "yes")])
+def test_measure_dry_run_via_cli_is_read_only(tmp_path: Path, capsys, force: bool, expected_force: str):
+    raw_metadata = raw_source(tmp_path)
+    preprocessed = preprocess(raw_metadata, tmp_path / "preprocessed")
+    output = tmp_path / "does-not-exist"
+    arguments = ["measure", "--input-metadata", str(preprocessed["output_metadata_path"]), "--output", str(output), "--dry-run"]
+    if force:
+        arguments.append("--force")
+
+    assert main(arguments) == 0
+    text = capsys.readouterr().out
+    for field in ["input metadata path:", "measurement target count:", "excluded count:", "metric versions:", "measurement required:"]:
+        assert field in text
+    assert f"--force: {expected_force}" in text
+    assert "measurement required: yes" in text
+    assert not output.exists()
+
+
+def test_measure_failure_returns_stderr(monkeypatch, tmp_path, capsys):
+    import ygonlp.cli as cli
+
+    monkeypatch.setattr(cli, "measure", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("測定失敗")))
+    assert main(["measure", "--input-metadata", str(tmp_path / "input.metadata.json"), "--output", str(tmp_path / "out")]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "測定失敗" in captured.err
