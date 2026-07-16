@@ -2,7 +2,7 @@
 
 ## 目的と範囲
 
-Issue #1で取得したYGOPRODeck API v7のraw JSONを、後続の指標計算・集計用の安定した中間データへ変換する仕様である。本書は設計のみを定め、実装は含まない。
+Issue #1で取得したYGOPRODeck API v7のraw JSONを、後続の指標計算・集計用の安定した中間データへ変換する仕様である。本書はIssue #2 MVPの実装仕様を定める。
 
 対象入力はCard Information endpointの `misc=yes` 付き全件取得結果である。入力raw JSON、取得metadata、出力中間データはいずれもGit管理しない。
 
@@ -31,17 +31,32 @@ Issue #1で取得したYGOPRODeck API v7のraw JSONを、後続の指標計算�
 
 ### `is_effect_text_target` の初期規則
 
+初期版の研究対象は、APIの`desc`全体をカード単位の英語記述として扱う。Pendulum Effect、モンスター効果、その他の領域は推測分割しない。したがって、初期指標は個別効果領域ではなく、カード単位で提供された`desc`全体の記述的特徴を表す。
+
+target policy versionは `1` とする。target type allowlistは次である。
+
+```text
+Effect Monster / Flip Effect Monster / Gemini Monster / Union Effect Monster
+Spirit Monster / Toon Monster / Tuner Monster / Synchro Tuner Monster
+Fusion Monster / Synchro Monster / XYZ Monster / Link Monster / Ritual Effect Monster
+Pendulum Effect Monster / Pendulum Tuner Effect Monster / Pendulum Effect Fusion Monster
+Pendulum Flip Effect Monster / XYZ Pendulum Effect Monster / Synchro Pendulum Effect Monster
+Pendulum Effect Ritual Monster / Flip Tuner Effect Monster / Spell Card / Trap Card
+```
+
+対象判定は明示的なallowlistだけに基づく。allowlist内のMonsterは`has_effect == 1`を要求し、Spell CardとTrap Cardはallowlistだけで対象とする。unknown typeは保持するが、自動的に対象へ含めず、`is_effect_text_target=false`、`unknown_card_type` warningとして記録する。対象規則を変更するときはtarget policy versionを上げる。
+
 優先順に次を適用する。
 
 1. `desc` が欠損なら `false`、`exclusion_reason` は `missing_text`。
 2. `desc` が空文字なら `false`、`exclusion_reason` は `empty_text`。
 3. `type == "Token"` なら `false`、`token`。
 4. `type == "Skill Card"` なら `false`、`skill_card`。
-5. `frameType` が `normal` または `normal_pendulum` なら `false`、`normal_monster_flavor`。
-6. `type` が `Monster` を含み、`misc_info[0].has_effect` が整数 `1` ではないなら `false`、`non_effect_monster`。
+5. `frameType` が `normal` または `normal_pendulum` なら `false`、`normal_monster_flavor_text`。
+6. allowlistに含まれるMonsterで`misc_info[0].has_effect` が整数 `1` ではないなら `false`、`not_in_target_policy`。
 7. `type` が `Spell Card` または `Trap Card` なら `true`、理由はnull。
-8. `type` が `Monster` を含み、`has_effect == 1` なら `true`、理由はnull。
-9. それ以外は `false`、`unknown_card_type`。
+8. allowlistに含まれるMonsterで`has_effect == 1` なら `true`、理由はnull。
+9. allowlist外の既知typeは `false`、`not_in_target_policy`。未知typeは `false`、`unknown_card_type`。
 
 通常モンスター、Normal Tuner Monster、Pendulum Normal Monster、Ritual Monsterなど、effect flagを持たないモンスターの`desc`は保持するが初期効果テキスト分析から除外する。Pendulum系は分割・推測を行わず、対象なら結合された`desc`全体を1つのテキストとして扱う。TokenとSkill Cardも保持するが、初期研究対象からは除外する。
 
@@ -52,10 +67,10 @@ Issue #1で取得したYGOPRODeck API v7のraw JSONを、後続の指標計算�
 初期MVPの入力はraw data fileではなく、Issue #1が生成したraw metadata fileとする。
 
 ```text
-ygonlp preprocess --metadata <raw-metadata-json> --output <output-directory>
+ygonlp preprocess --input-metadata <raw-metadata-json> --output <output-directory>
 ```
 
-`--metadata` から `data_file` を安全に解決し、`completed`、schema version、cache key、SHA-256 checksum、record countを検証してからraw JSONを読む。これにより入力のprovenanceと完全性を必須にする。
+`--input-metadata` から `data_file` を安全に解決し、`completed`、schema version、cache key、SHA-256 checksum、record countを検証してからraw JSONを読む。これにより入力のprovenanceと完全性を必須にする。
 
 `--input <raw-data-json>` を直接受け取る方式は初期MVPでは採用しない。metadataを伴わないrawファイルの直接利用は、provenanceの検証を弱めるためである。
 
@@ -77,12 +92,11 @@ ygonlp preprocess --metadata <raw-metadata-json> --output <output-directory>
 
 ## 中間record schema
 
-`schema_version` と `normalization_version` は実装時に文字列定数化する。欠損はJSON `null`、空文字は空文字として区別する。
+固定バージョン値は、preprocessing schema version `1`、record schema version `1`、normalization version `1`、target policy version `1`、preprocessing metadata schema version `1` とする。すべてコード内の明示的定数であり、metadataへ記録する。欠損はJSON `null`、空文字は空文字として区別する。
 
 | field | 型 | 必須 | source / 規則 | 用途 |
 | --- | --- | --- | --- | --- |
-| `schema_version` | string | 必須 | 中間schema定数 | 互換性判定 |
-| `normalization_version` | string | 必須 | 正規化規則定数 | 結果比較 |
+| `schema_version` | integer | 必須 | record schema定数 `1` | 互換性判定 |
 | `card_id` | integer | 必須 | `id` | 一意キー、並び順 |
 | `name` | string | 必須 | `name`、変更なし | 監査・極端値表示 |
 | `card_type` | string | 必須 | `type`、変更なし | 種別比較 |
@@ -96,9 +110,7 @@ ygonlp preprocess --metadata <raw-metadata-json> --output <output-directory>
 | `is_effect_text_target` | boolean | 必須 | 上記分類規則 | 初期分析filter |
 | `exclusion_reason` | string/null | 必須 | 上記分類規則 | 対象外の理由 |
 | `tcg_date` | string/null | 必須 | `misc_info[0].tcg_date` | 時系列主軸 |
-| `tcg_date_status` | string | 必須 | `present` / `missing` / `invalid` | 日付品質 |
 | `ocg_date` | string/null | 必須 | `misc_info[0].ocg_date` | 保持のみ |
-| `ocg_date_status` | string | 必須 | `present` / `missing` / `invalid` | 日付品質 |
 | `source_index` | integer | 必須 | raw `data`の0始まり位置 | raw順監査 |
 
 `source_api_version`、source cache key、source file名、checksum等のprovenanceは各recordへ重複させず、ファイル単位metadataへ置く。
@@ -113,6 +125,8 @@ ygonlp preprocess --metadata <raw-metadata-json> --output <output-directory>
 2. 先頭・末尾のUnicode whitespaceを除去する。
 
 内部の連続空白・改行は保持する。Unicode normalizationは初期段階では行わない。NFCは表記同一性を変える可能性があり、NFKCは互換文字や記号差を失わせる可能性があるためである。小文字化、句読点削除、定型句置換、HTML風記号の推測変換、文分割による上書きは行わない。
+
+JSONLはUTF-8（BOMなし）、LF、1record 1line、最終LFありとする。record内のキー順はschemaで固定し、`ensure_ascii=False` とcompact separatorsを使う。同じ入力・同じversion設定ではJSONL bytesを一致させ、checksumは実際に保存したJSONL bytesのSHA-256とする。
 
 ## 日付
 
@@ -138,7 +152,7 @@ ygonlp preprocess --metadata <raw-metadata-json> --output <output-directory>
 
 metadataは最低限、次を含む。
 
-- preprocessing schema version、normalization version、created at UTC
+- metadata schema version、preprocessing schema version、record schema version、normalization version、target policy version、created at UTC
 - source raw metadata file名、source raw data file名、source cache key、source checksum
 - input record count、output record count、target count、exclusion reason別件数
 - missing/invalid date数、missing text数、duplicate縮約数、unknown type数

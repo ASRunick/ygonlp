@@ -89,6 +89,11 @@ ygonlp export --format json
 
 詳細なrecord schema、日付・重複・エラー方針、CLI、テスト計画は[前処理仕様](docs/preprocessing-spec.md)を参照してください。
 
+```text
+ygonlp preprocess --input-metadata <raw-metadata-json> --output <output-directory> --dry-run
+ygonlp preprocess --input-metadata <raw-metadata-json> --output <output-directory>
+```
+
 ## 初期リポジトリ構成
 
 ```text
