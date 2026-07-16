@@ -6,6 +6,7 @@ import pytest
 
 from ygonlp.cli import main
 from ygonlp.preprocess import preprocess
+from ygonlp.measure import measure
 
 
 def raw_source(tmp_path: Path) -> Path:
@@ -29,7 +30,7 @@ def test_root_help(capsys):
         main(["--help"])
     assert exc.value.code == 0
     output = capsys.readouterr().out
-    assert "collect" in output and "preprocess" in output and "measure" in output
+    assert "collect" in output and "preprocess" in output and "measure" in output and "summarize" in output
 
 
 def test_collect_help(capsys):
@@ -149,3 +150,24 @@ def test_measure_failure_returns_stderr(monkeypatch, tmp_path, capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "測定失敗" in captured.err
+
+
+def test_summarize_help_and_required_input_metadata(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["summarize", "--help"])
+    assert exc.value.code == 0
+    assert "--input-metadata" in capsys.readouterr().out
+    with pytest.raises(SystemExit) as exc:
+        main(["summarize", "--output", "out", "--dry-run"])
+    assert exc.value.code != 0
+
+
+def test_summarize_dry_run_via_cli_is_read_only(tmp_path: Path, capsys):
+    raw_metadata = raw_source(tmp_path)
+    preprocessed = preprocess(raw_metadata, tmp_path / "preprocessed")
+    measured = measure(preprocessed["output_metadata_path"], tmp_path / "measured")
+    output = tmp_path / "does-not-exist"
+    assert main(["summarize", "--input-metadata", str(measured["output_metadata_path"]), "--output", str(output), "--dry-run", "--force"]) == 0
+    text = capsys.readouterr().out
+    assert "overall count:" in text and "summary required: yes" in text
+    assert not output.exists()

@@ -10,6 +10,21 @@
 
 初期段階では、公開APIからカードデータを取得し、決定論的な前処理、測定、集計を行います。成果物はCSV、JSON、Markdown、またはターミナル上の表として出力します。
 
+## 開発環境
+
+Python 3.11を使用します。実行時の集計依存には `numpy>=2.0,<3` を含みます。conda環境は次で作成できます。
+
+```text
+conda env create -f environment.yml
+conda activate ygonlp
+```
+
+既存環境では、開発用editable installを使用します。
+
+```text
+python -m pip install -e ".[dev]"
+```
+
 ## データソースと発売時期
 
 初期データソースには、YGOPRODeck API v7を使用します。Card Information endpointは次のとおりです。
@@ -104,6 +119,19 @@ ygonlp measure --input-metadata <preprocessing-metadata-json> --output <output-d
 ```
 
 `--dry-run` は前処理metadataとJSONLを読み取り・検証しますが、出力や一時ファイルを作成せず、API通信も行いません。詳細な指標定義、空出力、保存・検証方針は[測定仕様](docs/measurement-spec.md)を参照してください。
+
+## テキスト指標の集計
+
+`summarize` は `measure` が生成したmeasurement metadataを入力境界として検証し、`collect → preprocess → measure → summarize` の最後の集計段階を実行します。JSON、long-format CSV、Markdown tableを常に同時に生成します。全測定recordのoverall集計と、`tcg_date` の先頭4桁によるTCG初出年別集計を出力します。`tcg_date=null` は補完せず、`unknown` groupとして年の後ろに配置します。
+
+```text
+ygonlp summarize \
+  --input-metadata <measurement-metadata-json> \
+  --output <output-directory> \
+  --dry-run
+```
+
+各metricは母標準偏差（NumPy `ddof=0`）とlinear percentileで集計し、浮動小数の出力は6桁に固定します。`summarize` は既存のmeasurement metadataとJSONLだけを読み、カードデータAPI通信を行いません。生成されたJSON、CSV、Markdown、metadataはGit管理対象に追加しません。詳細は[集計仕様](docs/summary-spec.md)を参照してください。
 
 ## 初期リポジトリ構成
 
