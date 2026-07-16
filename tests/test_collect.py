@@ -1,11 +1,13 @@
-import json
 import hashlib
+import json
+import os
 from pathlib import Path
 
 import httpx
 import pytest
 
-from ygonlp.collect import RequestSpec, cache_key, cache_paths, collect, valid_cache
+import ygonlp.collect as module
+from ygonlp.collect import RequestSpec, cache_key, collect, metadata_path, valid_cache
 
 
 class FakeClient:
@@ -15,93 +17,239 @@ class FakeClient:
 
     def get(self, url, *, params, timeout):
         self.calls.append((url, params, timeout))
-        response = next(self.responses)
-        if isinstance(response, Exception):
-            raise response
-        return response
+        item = next(self.responses)
+        if isinstance(item, Exception):
+            raise item
+        return item
 
 
-def response(status=200, payload=None, headers=None):
+def response(status=200, payload=None):
     request = httpx.Request("GET", "https://example.test")
     if payload is None:
         return httpx.Response(status, request=request, content=b"not-json")
-    return httpx.Response(status, request=request, json=payload, headers=headers or {"content-type": "application/json"})
+    return httpx.Response(status, request=request, json=payload, headers={"content-type": "application/json"})
 
 
-def test_cache_key_is_order_independent_and_sensitive_to_inputs():
-    a = RequestSpec(params={"misc": "yes", "b": "2"})
-    b = RequestSpec(params={"b": "2", "misc": "yes"})
-    assert cache_key(a) == cache_key(b)
-    assert cache_key(RequestSpec(endpoint="https://other.test")) != cache_key(RequestSpec())
-    assert cache_key(RequestSpec(params={"misc": "no"})) != cache_key(RequestSpec())
+def good_payload(identifier=1):
+    return {"data": [{"id": identifier}]}
 
 
-def test_invalid_cache_variants(tmp_path: Path):
-    data_path, metadata_path = cache_paths(tmp_path, cache_key(RequestSpec()))
-    assert not valid_cache(data_path, metadata_path, cache_key(RequestSpec()))
-    data_path.write_text(json.dumps({"data": [{"id": 1}]}), encoding="utf-8")
-    assert not valid_cache(data_path, metadata_path, cache_key(RequestSpec()))
-    metadata_path.write_text(json.dumps({"schema_version": "wrong"}), encoding="utf-8")
-    assert not valid_cache(data_path, metadata_path, cache_key(RequestSpec()))
-    metadata_path.write_text(json.dumps({"schema_version": "1", "cache_key": cache_key(RequestSpec()), "completed": True}), encoding="utf-8")
-    assert valid_cache(data_path, metadata_path, cache_key(RequestSpec()))
-    data_path.write_text(json.dumps({"data": []}), encoding="utf-8")
-    assert not valid_cache(data_path, metadata_path, cache_key(RequestSpec()))
+def save_good_cache(tmp_path: Path, identifier=1):
+    return collect(tmp_path, client=FakeClient([response(payload=good_payload(identifier))]), sleep=lambda _: None)
 
 
-def test_success_saves_data_metadata_and_checksum(tmp_path: Path):
-    client = FakeClient([response(payload={"data": [{"id": 1}]})])
-    result = collect(tmp_path, client=client, sleep=lambda _: None)
-    assert result["status"] == "fetched"
-    assert result["record_count"] == 1
-    data_path = Path(result["data_path"])
-    metadata_path = Path(result["metadata_path"])
-    assert data_path.exists() and metadata_path.exists()
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+def read_metadata(tmp_path: Path):
+    key = cache_key(RequestSpec())
+    return json.loads(metadata_path(tmp_path, key).read_text(encoding="utf-8"))
+
+
+def test_cache_key_same_conditions_same_key():
+    assert cache_key(RequestSpec()) == cache_key(RequestSpec())
+
+
+def test_cache_key_query_order_independent():
+    assert cache_key(RequestSpec(params={"a": "1", "b": "2"})) == cache_key(RequestSpec(params={"b": "2", "a": "1"}))
+
+
+def test_cache_key_endpoint_changes():
+    assert cache_key(RequestSpec()) != cache_key(RequestSpec(endpoint="https://example.test/cards"))
+
+
+def test_cache_key_parameter_value_changes():
+    assert cache_key(RequestSpec()) != cache_key(RequestSpec(params={"misc": "no"}))
+
+
+def test_cache_key_api_version_changes():
+    assert cache_key(RequestSpec()) != cache_key(RequestSpec(api_version="v8"))
+
+
+def test_cache_key_schema_version_changes(monkeypatch):
+    original = cache_key(RequestSpec())
+    monkeypatch.setattr(module, "SCHEMA_VERSION", "next")
+    assert original != cache_key(RequestSpec())
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "metadata_missing", "data_missing", "metadata_broken", "data_broken", "schema", "key",
+        "completed", "data_key", "data_not_list", "data_empty", "checksum", "record_count",
+        "absolute", "parent", "outside",
+    ],
+)
+def test_invalid_cache_cases(tmp_path, mutation):
+    result = save_good_cache(tmp_path)
+    key = result["cache_key"]
+    meta_path = Path(result["metadata_path"])
+    metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+    data_path = tmp_path / metadata["data_file"]
+    if mutation == "metadata_missing":
+        meta_path.unlink()
+    elif mutation == "data_missing":
+        data_path.unlink()
+    elif mutation == "metadata_broken":
+        meta_path.write_text("{", encoding="utf-8")
+    elif mutation == "data_broken":
+        data_path.write_text("{", encoding="utf-8")
+    elif mutation == "schema":
+        metadata["schema_version"] = "old"
+    elif mutation == "key":
+        metadata["cache_key"] = "wrong"
+    elif mutation == "completed":
+        metadata["completed"] = False
+    elif mutation == "data_key":
+        data_path.write_text(json.dumps({"items": []}), encoding="utf-8")
+    elif mutation == "data_not_list":
+        data_path.write_text(json.dumps({"data": {}}), encoding="utf-8")
+    elif mutation == "data_empty":
+        data_path.write_text(json.dumps({"data": []}), encoding="utf-8")
+    elif mutation == "checksum":
+        metadata["data_sha256"] = "0" * 64
+    elif mutation == "record_count":
+        metadata["record_count"] = 999
+    elif mutation == "absolute":
+        metadata["data_file"] = str(data_path.resolve())
+    elif mutation == "parent":
+        metadata["data_file"] = "../outside.json"
+    elif mutation == "outside":
+        outside = tmp_path.parent / "outside.json"
+        outside.write_bytes(data_path.read_bytes())
+        metadata["data_file"] = outside.name
+    if mutation not in {"metadata_missing", "metadata_broken"}:
+        if mutation not in {"data_broken", "data_key", "data_not_list", "data_empty"}:
+            meta_path.write_text(json.dumps(metadata), encoding="utf-8")
+    assert not valid_cache(tmp_path, key)
+
+
+def test_normal_cache_is_valid_and_reused(tmp_path):
+    first = save_good_cache(tmp_path)
+    hit_client = FakeClient([])
+    second = collect(tmp_path, client=hit_client)
+    assert valid_cache(tmp_path, first["cache_key"])
+    assert second["status"] == "cache_hit"
+    assert hit_client.calls == []
+
+
+def test_force_does_not_use_cache_hit(tmp_path):
+    save_good_cache(tmp_path)
+    client = FakeClient([response(payload=good_payload(2))])
+    assert collect(tmp_path, force=True, client=client)["status"] == "fetched"
+    assert len(client.calls) == 1
+
+
+def test_success_saves_generation_metadata_and_checksum(tmp_path):
+    result = save_good_cache(tmp_path)
+    metadata = read_metadata(tmp_path)
+    data = tmp_path / metadata["data_file"]
+    assert data.name.startswith("cards-") and data.name.endswith(".json")
+    assert metadata["data_file"] == Path(result["data_path"]).name
+    assert metadata["data_sha256"] == hashlib.sha256(data.read_bytes()).hexdigest()
     assert metadata["record_count"] == 1
-    assert metadata["completed"] is True
-    assert metadata["data_sha256"] == hashlib.sha256(data_path.read_bytes()).hexdigest()
-    assert valid_cache(data_path, metadata_path, result["cache_key"])
-    assert not list(tmp_path.glob(".*.tmp"))
+    assert not list(tmp_path.glob("*.tmp"))
 
 
-def test_valid_cache_reused_and_force_fetches(tmp_path: Path):
-    first = FakeClient([response(payload={"data": [{"id": 1}]})])
-    collect(tmp_path, client=first)
-    hit = FakeClient([])
-    assert collect(tmp_path, client=hit)["status"] == "cache_hit"
-    assert hit.calls == []
-    forced = FakeClient([response(payload={"data": [{"id": 2}]})])
-    assert collect(tmp_path, force=True, client=forced)["status"] == "fetched"
-    assert len(forced.calls) == 1
+@pytest.mark.parametrize("payload", [None, [], {"items": []}, {"data": {}}, {"data": []}])
+def test_invalid_200_response_does_not_retry(tmp_path, payload):
+    client = FakeClient([response(payload=payload)])
+    with pytest.raises(RuntimeError):
+        collect(tmp_path, client=client, sleep=lambda _: None)
+    assert len(client.calls) == 1
+
+
+@pytest.mark.parametrize("status", [400, 404])
+def test_4xx_does_not_retry(tmp_path, status):
+    client = FakeClient([response(status=status, payload=good_payload())])
+    with pytest.raises(RuntimeError):
+        collect(tmp_path, client=client, sleep=lambda _: None)
+    assert len(client.calls) == 1
+
+
+def test_429_does_not_retry_or_sleep(tmp_path):
+    client = FakeClient([response(status=429, payload=good_payload())])
+    sleeps = []
+    with pytest.raises(RuntimeError, match="429"):
+        collect(tmp_path, client=client, sleep=sleeps.append)
+    assert len(client.calls) == 1
+    assert sleeps == []
+
+
+@pytest.mark.parametrize("status", [500, 503])
+def test_5xx_retries_at_most_three_times(tmp_path, status):
+    client = FakeClient([response(status=status, payload=good_payload())] * 3)
+    with pytest.raises(RuntimeError):
+        collect(tmp_path, client=client, sleep=lambda _: None, jitter=lambda: 0)
+    assert len(client.calls) == 3
 
 
 @pytest.mark.parametrize("failure", [httpx.ConnectError("x"), httpx.ReadTimeout("x")])
-def test_connection_and_timeout_retry_three_times(tmp_path, failure):
+def test_network_failures_retry_at_most_three_times(tmp_path, failure):
     client = FakeClient([failure, failure, failure])
     with pytest.raises(RuntimeError):
         collect(tmp_path, client=client, sleep=lambda _: None, jitter=lambda: 0)
     assert len(client.calls) == 3
 
 
-def test_400_and_429_do_not_retry(tmp_path):
-    for status in (400, 429):
-        client = FakeClient([response(status=status, payload={"data": [{"id": 1}]})])
-        with pytest.raises((RuntimeError, httpx.HTTPStatusError)):
-            collect(tmp_path / str(status), client=client, sleep=lambda _: None)
-        assert len(client.calls) == 1
-
-
-def test_500_retries_with_injected_sleep(tmp_path):
-    client = FakeClient([response(status=500, payload={"data": [{"id": 1}]})] * 2 + [response(payload={"data": [{"id": 1}]})])
+def test_retry_success_backoff_and_jitter(tmp_path):
+    client = FakeClient([response(status=500, payload=good_payload()), response(payload=good_payload())])
     sleeps = []
-    result = collect(tmp_path, client=client, sleep=sleeps.append, jitter=lambda: 0)
-    assert result["attempts"] == 3
-    assert sleeps == [1.0, 2.0]
+    result = collect(tmp_path, client=client, sleep=sleeps.append, jitter=lambda: 0.5)
+    assert result["attempts"] == 2
+    assert sleeps == [1.05]
 
 
-def test_invalid_success_response_does_not_retry(tmp_path):
-    client = FakeClient([response(payload={"items": []})])
+def test_data_write_failure_keeps_old_cache(tmp_path):
+    old = save_good_cache(tmp_path, 1)
+    old_metadata = Path(old["metadata_path"]).read_bytes()
+    def fail_data(path, content):
+        raise OSError("data write failure")
+    with pytest.raises(RuntimeError, match="既存キャッシュ"):
+        collect(tmp_path, force=True, client=FakeClient([response(payload=good_payload(2))]), writer=fail_data)
+    assert Path(old["metadata_path"]).read_bytes() == old_metadata
+    assert valid_cache(tmp_path, old["cache_key"])
+
+
+def test_metadata_write_failure_keeps_old_cache_and_removes_new_data(tmp_path):
+    old = save_good_cache(tmp_path, 1)
+    old_metadata = Path(old["metadata_path"]).read_bytes()
+    def fail_metadata(path, content):
+        if path.name.endswith("metadata.json"):
+            raise OSError("metadata write failure")
+        module._write_bytes_atomic(path, content)
     with pytest.raises(RuntimeError):
-        collect(tmp_path, client=client, sleep=lambda _: None)
-    assert len(client.calls) == 1
+        collect(tmp_path, force=True, client=FakeClient([response(payload=good_payload(2))]), writer=fail_metadata)
+    assert Path(old["metadata_path"]).read_bytes() == old_metadata
+    assert valid_cache(tmp_path, old["cache_key"])
+    assert len(list(tmp_path.glob("*.json"))) == 2  # old data + metadata only
+
+
+def test_metadata_replace_failure_keeps_old_cache(tmp_path, monkeypatch):
+    old = save_good_cache(tmp_path, 1)
+    old_metadata = Path(old["metadata_path"]).read_bytes()
+    original_replace = os.replace
+    def fail_metadata_replace(source, destination):
+        if Path(destination).name.endswith("metadata.json"):
+            raise OSError("metadata replace failure")
+        return original_replace(source, destination)
+    monkeypatch.setattr(module.os, "replace", fail_metadata_replace)
+    with pytest.raises(RuntimeError):
+        collect(tmp_path, force=True, client=FakeClient([response(payload=good_payload(2))]))
+    assert Path(old["metadata_path"]).read_bytes() == old_metadata
+    assert valid_cache(tmp_path, old["cache_key"])
+    assert not list(tmp_path.glob("*.tmp"))
+
+
+def test_force_fetch_failure_keeps_old_cache(tmp_path):
+    old = save_good_cache(tmp_path, 1)
+    with pytest.raises(RuntimeError):
+        collect(tmp_path, force=True, client=FakeClient([response(status=500, payload=good_payload())] * 3), sleep=lambda _: None)
+    assert valid_cache(tmp_path, old["cache_key"])
+
+
+def test_new_metadata_commits_new_generation(tmp_path):
+    old = save_good_cache(tmp_path, 1)
+    new = collect(tmp_path, force=True, client=FakeClient([response(payload=good_payload(2))]))
+    metadata = read_metadata(tmp_path)
+    assert metadata["data_file"] == Path(new["data_path"]).name
+    assert Path(new["data_path"]).read_text(encoding="utf-8").find('"id": 2') >= 0
+    assert Path(old["data_path"]).exists()  # old generation may safely remain unreferenced
+    assert valid_cache(tmp_path, new["cache_key"])

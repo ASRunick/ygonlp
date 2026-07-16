@@ -34,7 +34,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"metadata file path: {result['metadata_path']}")
         return 0
     except RuntimeError as exc:
-        print(f"エラー: {exc}")
+        import sys
+
+        print(f"エラー: {exc}", file=sys.stderr)
         return 1
 
 

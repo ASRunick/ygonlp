@@ -79,6 +79,8 @@ ygonlp export --format json
 
 `collect --dry-run` はAPI通信およびファイル変更を行わず、HTTP method、正規化済みendpointとquery parameters、出力先、メタデータ保存先、キャッシュキー、利用可能なキャッシュ、通常実行時の通信有無、`--force` の適用結果、最大リクエスト予算を表示します。GET、HEAD、その他のネットワーク通信を含めて完全にオフラインで動作します。
 
+収集データは世代別のdata fileとして保存し、固定パスのmetadataを有効キャッシュのコミットポインタとして扱います。metadataが参照するdata fileだけを有効とみなし、保存失敗時も既存の正常キャッシュを維持します。失敗時の未参照data fileは可能な限り削除し、残存しても有効キャッシュとしては扱いません。詳細仕様はIssue #1を参照してください。
+
 ## 初期リポジトリ構成
 
 ```text
