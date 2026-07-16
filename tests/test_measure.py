@@ -240,3 +240,13 @@ def test_valid_output_rejects_unsafe_metadata_reference(tmp_path):
     saved["output_data_file"] = "../outside.jsonl"
     meta_path.write_text(json.dumps(saved), encoding="utf-8")
     assert not valid_output(tmp_path / "output", result["measurement_cache_key"])
+
+
+def test_valid_output_requires_metric_identifiers_in_metadata(tmp_path):
+    metadata, _ = source_files(tmp_path)
+    result = measure(metadata, tmp_path / "output")
+    meta_path = Path(result["output_metadata_path"])
+    saved = json.loads(meta_path.read_text(encoding="utf-8"))
+    saved.pop("word_metric_identifier")
+    meta_path.write_text(json.dumps(saved), encoding="utf-8")
+    assert not valid_output(tmp_path / "output", result["measurement_cache_key"])
