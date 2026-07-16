@@ -28,13 +28,13 @@ OUTPUT_FORMAT = "jsonl"
 SORT_ORDER = "card_id_ascending"
 TARGET_SELECTION_RULE = "is_effect_text_target_true_and_nonblank_text_normalized"
 CHARACTER_METRIC_IDENTIFIER = "python_len_unicode_code_points_v1"
-WORD_METRIC_IDENTIFIER = "ascii_alnum_internal_apostrophe_hyphen_comma_v1"
+WORD_METRIC_IDENTIFIER = "unicode_alnum_internal_apostrophe_hyphen_grouped_numeric_comma_v1"
 SENTENCE_METRIC_IDENTIFIER = "split_terminal_punctuation_v1"
 PROJECT_VERSION = "0.0.0"
 KEY_PREFIX_LENGTH = 16
 CONTENT_PREFIX_LENGTH = 16
 
-WORD_PATTERN = re.compile(r"[A-Za-z0-9]+(?:['’,-][A-Za-z0-9]+)*")
+WORD_PATTERN = re.compile(r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[^\W_]+(?:['’-][^\W_]+)*)")
 SENTENCE_DELIMITER = re.compile(r"[.!?]+")
 
 RECORD_FIELDS = (
@@ -167,7 +167,7 @@ def character_count(text: str) -> int:
 
 
 def word_count(text: str) -> int:
-    """固定のASCII中心regexに一致する語の数を返す。"""
+    """固定のUnicode-aware regexに一致する語の数を返す。"""
     return len(WORD_PATTERN.findall(text))
 
 
@@ -218,6 +218,9 @@ def measurement_cache_key(source: Source) -> str:
         "character_metric_version": CHARACTER_METRIC_VERSION,
         "word_metric_version": WORD_METRIC_VERSION,
         "sentence_metric_version": SENTENCE_METRIC_VERSION,
+        "character_metric_identifier": CHARACTER_METRIC_IDENTIFIER,
+        "word_metric_identifier": WORD_METRIC_IDENTIFIER,
+        "sentence_metric_identifier": SENTENCE_METRIC_IDENTIFIER,
         "source_preprocessing_cache_key": source.metadata["preprocessing_cache_key"],
         "source_preprocessing_checksum": source.metadata["output_sha256"],
         "source_record_count": source.metadata["output_record_count"],

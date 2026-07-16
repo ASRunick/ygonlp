@@ -32,15 +32,15 @@ Pythonの `len(text_normalized)` と同じUnicode code point数である。空�
 
 ### `word_count`
 
-compile済みの次のregexのmatch数である。
+compile済みの次のPython標準`re` regex（Unicode semantics）のmatch数である。
 
 ```text
-[A-Za-z0-9]+(?:['’,-][A-Za-z0-9]+)*
+(?:[0-9]{1,3}(?:,[0-9]{3})+|[^\W_]+(?:['’-][^\W_]+)*)
 ```
 
-ASCII英字と数字を語本体とし、内部のASCII apostrophe、typographic apostrophe、hyphen、commaを許可する。これらが先頭・末尾だけにある場合は語に含めない。slash、colon、semicolon、period、question mark、括弧、改行、空白は区切りである。大文字小文字は変換せず、Unicode normalizationもしない。Unicode英字自体は語本体に含めないため、regexがASCII連続部分にだけ一致する場合がある。
+Unicode英数字の連続（underscoreを除く）を語本体とし、内部のASCII apostrophe、typographic apostrophe、hyphenを許可する。commaは3桁区切り数値にだけ許可し、一般の語を連結しない。slash、colon、semicolon、period、question mark、括弧、空白、改行、underscoreは語境界である。大文字小文字は変換せず、Unicode normalizationもしない。したがって `éclair` と `カード` は各1語であり、Unicode語のASCII部分だけをphantom wordとして数えない。`foo_bar` は2語、結合文字列 `e\u0301` はbase characterの1語として扱う。
 
-例えば `X-Saber`、`once-per-turn`、`opponent's`、`opponent’s`、`1,000`、`1,000,000` は各1語、`ATK/DEF` と `Quick-Play Spell` は各2語である。
+例えば `X-Saber`、`once-per-turn`、`opponent's`、`opponent’s`、`1,000`、`1,000,000` は各1語、`ATK/DEF`、`Quick-Play Spell`、`card,draw` は各2語である。
 
 ### `sentence_count`
 
@@ -69,7 +69,7 @@ sentence_count
 
 ## Cache、metadata、保存
 
-measurement cache keyにはmeasurement metadata/record schema version、3つのmetric version、source preprocessing cache key、source preprocessing JSONL checksum、source record count、target selection rule、output format、sort orderを含める。同じ入力・定義では同じkey、metric versionまたは入力checksumが変われば異なるkeyとなる。
+measurement cache keyにはmeasurement metadata/record schema version、3つのmetric version、3つのmetric identifier、source preprocessing cache key、source preprocessing JSONL checksum、source record count、target selection rule、output format、sort orderを含める。同じ入力・定義では同じkey、metric version・metric identifier・入力checksumが変われば異なるkeyとなる。これにより、未マージの仕様修正でversionを維持する場合も旧generationをcache hitとして再利用しない。
 
 generation data fileは `cards-measured-<key-prefix>-<content-sha-prefix>.jsonl`、固定metadataは `cards-measured-<key-prefix>.metadata.json` とする。metadataはcommit pointerであり、少なくともversions、source provenance、入力・測定・除外・empty target textの件数、output file名・checksum・byte size、sort order、output format、metric identifier、project version、UTC作成時刻を記録する。
 

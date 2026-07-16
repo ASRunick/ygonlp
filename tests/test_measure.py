@@ -56,12 +56,18 @@ def test_character_count_uses_unicode_code_points(text, expected):
 
 
 @pytest.mark.parametrize(("text", "expected"), [
-    ("ordinary words", 2), ("X-Saber", 1), ("once-per-turn", 1), ("opponent's", 1),
-    ("opponent’s", 1), ("1,000", 1), ("1,000,000", 1), ("ATK/DEF", 2),
-    ("Quick-Play Spell", 2), ("card:draw; ('card')", 3), ("", 0), ("éclair 漢字", 1),
+    ("ordinary words", 2), ("éclair", 1), ("café", 1), ("X-Saber", 1), ("once-per-turn", 1),
+    ("opponent's", 1), ("opponent’s", 1), ("1,000", 1), ("1,000,000", 1),
+    ("ATK/DEF", 2), ("Quick-Play Spell", 2), ("card:draw; ('card')", 3),
+    ("card,draw", 2), ("card, draw", 2), ("foo_bar", 2), ("カード", 1),
+    ("e\u0301", 1), ("éclairX", 1), ("", 0), ("...!?", 0), ("_", 0),
 ])
-def test_word_count_uses_fixed_ascii_pattern(text, expected):
+def test_word_count_uses_fixed_unicode_aware_pattern(text, expected):
     assert word_count(text) == expected
+
+
+def test_word_pattern_is_compiled_unicode_aware_constant():
+    assert module.WORD_PATTERN.pattern == r"(?:[0-9]{1,3}(?:,[0-9]{3})+|[^\W_]+(?:['’-][^\W_]+)*)"
 
 
 @pytest.mark.parametrize(("text", "expected"), [
@@ -163,6 +169,9 @@ def test_measurement_cache_key_changes_with_versions_and_input_checksum(tmp_path
     monkeypatch.setattr(module, "WORD_METRIC_VERSION", 2)
     assert measurement_cache_key(source) != original
     monkeypatch.setattr(module, "WORD_METRIC_VERSION", 1)
+    monkeypatch.setattr(module, "WORD_METRIC_IDENTIFIER", "different-word-definition")
+    assert measurement_cache_key(source) != original
+    monkeypatch.setattr(module, "WORD_METRIC_IDENTIFIER", "unicode_alnum_internal_apostrophe_hyphen_grouped_numeric_comma_v1")
     changed = dict(source.metadata, output_sha256="1" * 64)
     changed_source = module.Source(source.metadata_path, source.data_path, changed, source.records)
     assert measurement_cache_key(changed_source) != original
