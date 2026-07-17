@@ -19,6 +19,7 @@ from .timeseries import TimeSeriesError, analyze_timeseries, dry_run_lines as ti
 from .similarity import SimilarityError, search_similar
 from .vocabulary import VocabularyError, analyze_topics, analyze_vocabulary
 from .prices import PriceSnapshotError, snapshot_prices
+from .price_analysis import PriceAnalysisError, analyze_prices
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -84,6 +85,13 @@ def build_parser() -> argparse.ArgumentParser:
     prices_parser.add_argument("--input-metadata", type=Path, required=True, help="collection metadata JSON")
     prices_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
     prices_parser.add_argument("--force", action="store_true", help="有効な価格snapshotを無視して再生成")
+    price_analysis_parser = subparsers.add_parser("analyze-prices", help="価格snapshotとテキスト指標を結合分析する")
+    price_analysis_parser.add_argument("--price-metadata", type=Path, required=True, help="price snapshot metadata JSON")
+    price_analysis_parser.add_argument("--measurement-metadata", type=Path, required=True, help="measurement metadata JSON")
+    price_analysis_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
+    price_analysis_parser.add_argument("--character-buckets", default="100,200,300,500", help="comma区切りの正の昇順character count境界")
+    price_analysis_parser.add_argument("--include-zero", action="store_true", help="zero priceを統計・相関へ含める")
+    price_analysis_parser.add_argument("--force", action="store_true", help="有効な価格分析出力を無視して再生成")
     verify_preprocess_parser = subparsers.add_parser(
         "verify-preprocess",
         help="前処理cacheを全record単位で深く検証する",
@@ -117,6 +125,7 @@ def main(argv: list[str] | None = None) -> int:
         "analyze-vocabulary",
         "analyze-topics",
         "snapshot-prices",
+        "analyze-prices",
     }:
         build_parser().print_help()
         return 0
@@ -172,6 +181,12 @@ def main(argv: list[str] | None = None) -> int:
             print(f"status: {result['status']}")
             print(f"price snapshot data path: {result['output_data_path']}")
             print(f"price snapshot metadata path: {result['output_metadata_path']}")
+        elif args.command == "analyze-prices":
+            result = analyze_prices(args.price_metadata, args.measurement_metadata, args.output,
+                                    character_buckets=args.character_buckets, include_zero=args.include_zero, force=args.force)
+            print(f"status: {result['status']}")
+            for name, path in result["output_paths"].items(): print(f"{name} output file path: {path}")
+            print(f"price analysis metadata path: {result['output_metadata_path']}")
         elif args.dry_run:
             if args.command == "preprocess":
                 print("\n".join(preprocess_dry_run_lines(args.input_metadata, args.output, force=args.force)))
@@ -198,7 +213,7 @@ def main(argv: list[str] | None = None) -> int:
             for code, count in result["warnings"].items():
                 print(f"warning: {code}: {count} records", file=__import__("sys").stderr)
         return 0
-    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, SimilarityError, VocabularyError, PriceSnapshotError) as exc:
+    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, SimilarityError, VocabularyError, PriceSnapshotError, PriceAnalysisError) as exc:
         import sys
 
         print(f"エラー: {exc}", file=sys.stderr)

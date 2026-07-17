@@ -191,6 +191,16 @@ ygonlp snapshot-prices --input-metadata <collection-metadata-json> --output <dir
 
 対応vendorはcardmarket（EUR）、tcgplayer / ebay / amazon / coolstuffinc（USD）です。通貨換算やvendor間の統合は行いません。価格はDecimalとして検証し、raw stringとdecimal stringをともに保存します。`"0.00"` は有効な観測値であり、zero flagを記録します。metadataの`missing_vendor_field_counts`は、全`card_prices` objectを確認してもnon-null値がない**card×vendor pair**数です。
 
+## Snapshot価格分析
+
+`analyze-prices` は検証済みprice snapshotとmeasurement metadataを`card_id`完全一致で結合し、API通信なしでvendor/currency別に記述統計と価格対テキスト長のPearson/Spearman相関を出力します。通貨換算・vendor統合は行いません。zero priceはcoverageに残し、既定では統計・相関から除外します。`--include-zero`でのみ分析へ含めます。coverageの`snapshot_zero_observation_count`はsnapshot全体、`joined_zero_observation_count`はmeasurementとjoinできた観測だけのzero件数です。
+
+```text
+ygonlp analyze-prices --price-metadata <price-snapshot-metadata-json> --measurement-metadata <measurement-metadata-json> --output <directory> --character-buckets 100,200,300,500
+```
+
+bucketは`0..最初の境界`、続いて`前境界+1..境界`、最後に`最終境界より大`（各上限を含む）です。TCG年別groupはsnapshot日時点で欠損または未来の候補日を除外します。Decimal価格は入力・join中に維持し、NumPy/SciPy統計・相関を実行する直前だけ有限`float64`へ変換します。相関は2件未満またはいずれかが定数ならundefined（`null`）であり、0にはしません。
+
 ## 初期リポジトリ構成
 
 ```text
