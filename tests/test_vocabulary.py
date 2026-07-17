@@ -23,7 +23,7 @@ def source(tmp_path: Path, records=None):
         record(2, "Beta", "draw monster"),
         record(3, "Gamma", "summon monster", type="Spell Card", frameType="spell", misc_info=[{"has_effect": 1, "tcg_date": None}]),
         record(4, "Future", "summon card", misc_info=[{"has_effect": 1, "tcg_date": "2030-01-01"}]),
-        record(5, "Empty", ""), record(6, "Tokenless", "!!!"),
+        record(5, "Empty", ""), record(6, "Tokenless", "}}"),
     ]
     raw = json.dumps({"data": records}).encode(); data = tmp_path / "raw.json"; data.write_bytes(raw)
     metadata = tmp_path / "raw.metadata.json"
@@ -92,6 +92,35 @@ def test_output_cache_force_determinism_rollback_and_sklearn_metadata(tmp_path):
     topic_metadata = json.loads(topics["output_metadata_path"].read_text(encoding="utf-8"))
     assert topic_metadata["lda_class"] == "sklearn.decomposition.LatentDirichletAllocation"
     assert topic_metadata["sklearn_version"] == module.sklearn.__version__
+
+
+def test_metadata_reports_non_tokenizable_documents_for_vocabulary_and_topics(tmp_path):
+    input_metadata = source(tmp_path)
+    vocabulary = analyze_vocabulary(input_metadata, tmp_path / "vocabulary-output")
+    topics = analyze_topics(input_metadata, tmp_path / "topics-output", topic_count=2, top_terms=2,
+                            representative_cards=2, random_seed=3, max_iter=3, today=date(2021, 1, 1))
+
+    for analysis in (vocabulary, topics):
+        metadata = json.loads(analysis["output_metadata_path"].read_text(encoding="utf-8"))
+        assert metadata["non_tokenizable_document_count"] == 1
+        assert metadata["non_tokenizable_card_ids"] == [6]
+
+
+def test_document_filtering_keeps_stopword_and_bigram_behavior(tmp_path):
+    input_metadata = source(tmp_path, [
+        record(1, "Pair", "alpha beta"), record(2, "Stopword", "the"),
+        record(3, "Single", "solo"), record(4, "Symbol", "}}"),
+    ])
+    source_data = loaded(input_metadata)
+
+    stopword_vocabulary = build_vocabulary(source_data, english_stopwords=True)
+    stopword_topics = build_topics(source_data, topic_count=2, top_terms=1, representative_cards=1,
+                                   max_iter=2, english_stopwords=True, cutoff=date(2021, 1, 1))
+    bigrams = build_vocabulary(source_data, ngram=2)
+
+    assert stopword_vocabulary["document_count"] == 2
+    assert stopword_topics["document_count"] == 2
+    assert bigrams["document_count"] == 1
 
 
 def test_topics_cache_force_serialization_rollback_and_metadata_definition(tmp_path):
