@@ -9,10 +9,12 @@ Install the development dependencies, then run the script with local analysis me
 ```powershell
 python -m pip install -e ".[dev]"
 python scripts/generate_note_figures.py `
-  --timeseries-metadata C:\Users\Tadashi\data\ygonlp\dogfood-issue-23-20260717\timeseries\timeseries-390f66c645bd94e3.metadata.json `
-  --release-counts-metadata C:\Users\Tadashi\data\ygonlp\note-release-counts\release-counts-0a6b7dc6bc43d135.metadata.json `
+  --timeseries-metadata <path-to-timeseries-metadata.json> `
+  --release-counts-metadata <path-to-release-counts-metadata.json> `
   --output docs\note\assets
 ```
+
+Generate the analysis outputs first with the same measurement input and intended UTC cutoff. The script accepts only completed metadata, resolves the referenced JSON beside it, and verifies its SHA-256 checksum. A different source snapshot, cutoff, dependency version, or analysis parameter can legitimately produce different figures.
 
 The command writes both `.svg` and `.png` for each figure:
 

@@ -43,6 +43,7 @@ def _configure_style() -> None:
         "font.family": "DejaVu Sans", "font.size": 10, "axes.titleweight": "bold",
         "axes.spines.top": False, "axes.spines.right": False, "axes.grid": True,
         "grid.alpha": 0.25, "grid.linewidth": 0.7, "svg.fonttype": "none",
+        "svg.hashsalt": "ygonlp-note-figures-v1",
     })
 
 
@@ -55,7 +56,8 @@ def _normalize_svg(path: Path) -> None:
 def _save(figure: plt.Figure, output: Path, basename: str) -> None:
     for suffix in ("svg", "png"):
         path = output / f"{basename}.{suffix}"
-        figure.savefig(path, dpi=FIGURE_DPI, bbox_inches="tight", facecolor="white")
+        metadata = {"Date": None} if suffix == "svg" else None
+        figure.savefig(path, dpi=FIGURE_DPI, bbox_inches="tight", facecolor="white", metadata=metadata)
         if suffix == "svg":
             _normalize_svg(path)
     plt.close(figure)
@@ -120,20 +122,26 @@ def plot_pipeline_overview(output: Path) -> None:
     axis.set_xlim(0, 1)
     axis.set_ylim(0, 1)
     axis.axis("off")
-    stages = [(0.10, "collect"), (0.30, "preprocess"), (0.50, "measure"), (0.70, "summarize"), (0.90, "analyze-*")]
+    stages = [(0.12, "collect"), (0.36, "preprocess"), (0.60, "measure"), (0.84, "summarize")]
     for x, label in stages:
-        _box(axis, x, 0.72, label, width=0.16)
+        _box(axis, x, 0.80, label, width=0.18)
     for (x1, _), (x2, _) in zip(stages, stages[1:]):
-        _arrow(axis, (x1 + 0.085, 0.72), (x2 - 0.085, 0.72))
-    _arrow(axis, (0.90, 0.635), (0.90, 0.55))
-    axis.text(0.50, 0.51, "representative downstream commands", ha="center", va="center", fontsize=10, color="#4a5560")
+        _arrow(axis, (x1 + 0.10, 0.80), (x2 - 0.10, 0.80))
+    _box(axis, 0.12, 0.57, "snapshot-prices", width=0.20, fontsize=9)
+    _arrow(axis, (0.12, 0.73), (0.12, 0.65))
     commands = [
-        (0.17, 0.33, "analyze-timeseries"), (0.50, 0.33, "analyze-releases"),
-        (0.83, 0.33, "search-similar"), (0.17, 0.13, "analyze-vocabulary"),
-        (0.50, 0.13, "analyze-topics"), (0.83, 0.13, "analyze-prices"),
+        (0.15, 0.34, "search-similar"), (0.40, 0.34, "analyze-vocabulary"),
+        (0.15, 0.14, "analyze-topics"), (0.65, 0.34, "analyze-timeseries"),
+        (0.89, 0.34, "analyze-releases"), (0.72, 0.14, "analyze-prices"),
     ]
     for x, y, label in commands:
-        _box(axis, x, y, label, width=0.25, fontsize=9)
+        _box(axis, x, y, label, width=0.20, fontsize=8)
+    for x, y in ((0.15, 0.34), (0.40, 0.34), (0.15, 0.14)):
+        _arrow(axis, (0.36, 0.73), (x, y + 0.08))
+    for x, y in ((0.65, 0.34), (0.89, 0.34)):
+        _arrow(axis, (0.60, 0.73), (x, y + 0.08))
+    _arrow(axis, (0.60, 0.73), (0.72, 0.22))
+    _arrow(axis, (0.22, 0.57), (0.61, 0.19))
     axis.set_title("YGONLP analysis pipeline", loc="left", pad=12)
     _save(figure, output, "analysis-pipeline-overview")
 
