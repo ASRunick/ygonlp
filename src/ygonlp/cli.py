@@ -16,6 +16,7 @@ from .preprocess import (
 )
 from .summarize import SummarizeError, dry_run_lines as summarize_dry_run_lines, summarize
 from .timeseries import TimeSeriesError, analyze_timeseries, dry_run_lines as timeseries_dry_run_lines
+from .similarity import SimilarityError, search_similar
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -49,6 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
     timeseries_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
     timeseries_parser.add_argument("--dry-run", action="store_true", help="出力せずに時系列分析計画を検証")
     timeseries_parser.add_argument("--force", action="store_true", help="有効な時系列分析出力を無視して再生成")
+    similar_parser = subparsers.add_parser("search-similar", help="正規化済み効果テキストを語彙的に検索する")
+    similar_parser.add_argument("--input-metadata", type=Path, required=True, help="preprocessing metadata JSON")
+    query_group = similar_parser.add_mutually_exclusive_group(required=True)
+    query_group.add_argument("--card-id", type=int, help="完全一致する card_id")
+    query_group.add_argument("--name", help="完全一致するカード名")
+    similar_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
+    similar_parser.add_argument("--top-n", type=int, default=10, help="返す正の件数（既定: 10）")
+    similar_parser.add_argument("--card-type", help="完全一致する card_type で候補を絞る")
+    similar_parser.add_argument("--release-status", choices=("released", "missing_date", "future_dated"), help="TCG発売状態で候補を絞る")
+    similar_parser.add_argument("--force", action="store_true", help="有効な類似検索出力を無視して再生成")
     verify_preprocess_parser = subparsers.add_parser(
         "verify-preprocess",
         help="前処理cacheを全record単位で深く検証する",
@@ -78,6 +89,7 @@ def main(argv: list[str] | None = None) -> int:
         "measure",
         "summarize",
         "analyze-timeseries",
+        "search-similar",
     }:
         build_parser().print_help()
         return 0
@@ -107,6 +119,15 @@ def main(argv: list[str] | None = None) -> int:
             result = analyze_timeseries(args.input_metadata, args.output, force=args.force)
             print(f"status: {result['status']}")
             print(f"timeseries metadata path: {result['output_metadata_path']}")
+        elif args.command == "search-similar":
+            result = search_similar(
+                args.input_metadata, args.output, card_id=args.card_id, name=args.name, top_n=args.top_n,
+                card_type=args.card_type, release_status=args.release_status, force=args.force,
+            )
+            print(f"status: {result['status']}")
+            for name, path in result["output_paths"].items():
+                print(f"{name} output file path: {path}")
+            print(f"similarity metadata path: {result['output_metadata_path']}")
         elif args.dry_run:
             if args.command == "preprocess":
                 print("\n".join(preprocess_dry_run_lines(args.input_metadata, args.output, force=args.force)))
@@ -133,7 +154,7 @@ def main(argv: list[str] | None = None) -> int:
             for code, count in result["warnings"].items():
                 print(f"warning: {code}: {count} records", file=__import__("sys").stderr)
         return 0
-    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError) as exc:
+    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, SimilarityError) as exc:
         import sys
 
         print(f"エラー: {exc}", file=sys.stderr)

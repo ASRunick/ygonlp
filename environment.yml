@@ -3,6 +3,7 @@ channels:
   - conda-forge
 dependencies:
   - python=3.11
+  - scikit-learn>=1.9,<2
   - pip
   - pip:
       - -e .[dev]

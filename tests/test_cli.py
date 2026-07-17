@@ -174,6 +174,14 @@ def test_analyze_timeseries_help_and_required_input_metadata(capsys):
     assert "--input-metadata" in capsys.readouterr().err
 
 
+def test_search_similar_help(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["search-similar", "--help"])
+    assert exc.value.code == 0
+    text = capsys.readouterr().out
+    assert "--input-metadata" in text and "--card-id" in text and "--name" in text and "--force" in text
+
+
 def test_summarize_dry_run_via_cli_is_read_only(tmp_path: Path, capsys):
     raw_metadata = raw_source(tmp_path)
     preprocessed = preprocess(raw_metadata, tmp_path / "preprocessed")
