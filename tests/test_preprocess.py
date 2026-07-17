@@ -8,13 +8,16 @@ import ygonlp.preprocess as module
 from ygonlp.preprocess import (
     RECORD_FIELDS,
     PreprocessError,
+    cleanup_preprocess,
     dry_run_lines,
     load_source,
     output_metadata_path,
     preprocess,
     preprocessing_cache_key,
+    referenced_preprocess_generation_names,
     serialize_jsonl,
     transform_cards,
+    unreferenced_preprocess_generation_names,
     valid_output,
     validate_preprocessed_record,
     verify_preprocessed_cache,
@@ -287,6 +290,112 @@ def test_output_metadata_path_traversal_is_invalid(tmp_path):
     meta["output_data_file"] = "../outside.jsonl"
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
     assert not valid_output(output, result["preprocessing_cache_key"])
+
+
+def test_cleanup_detects_unreferenced_generation_as_dry_run(tmp_path):
+    metadata, _ = source_files(tmp_path)
+    output = tmp_path / "out"
+    result = preprocess(metadata, output)
+    active = Path(result["output_data_path"])
+    orphan = output / "cards-normalized-0123456789abcdef-fedcba9876543210.jsonl"
+    orphan.write_text("orphan\n", encoding="utf-8")
+
+    plan = cleanup_preprocess(output)
+
+    assert plan["candidates"] == [orphan]
+    assert plan["deleted"] == []
+    assert orphan.exists() and active.exists()
+
+
+def test_cleanup_delete_removes_only_unreferenced_generation_and_not_metadata(tmp_path):
+    metadata, _ = source_files(tmp_path)
+    output = tmp_path / "out"
+    result = preprocess(metadata, output)
+    active = Path(result["output_data_path"])
+    metadata_path = Path(result["output_metadata_path"])
+    orphan = output / "cards-normalized-0123456789abcdef-fedcba9876543210.jsonl"
+    orphan.write_text("orphan\n", encoding="utf-8")
+
+    cleaned = cleanup_preprocess(output, delete=True)
+
+    assert cleaned["deleted"] == [orphan]
+    assert not orphan.exists()
+    assert active.exists() and metadata_path.exists()
+
+
+def test_cleanup_ignores_invalid_names_directories_and_symlinks(tmp_path):
+    metadata, _ = source_files(tmp_path)
+    output = tmp_path / "out"
+    result = preprocess(metadata, output)
+    active = Path(result["output_data_path"])
+    invalid = output / "cards-normalized-not-a-generation.jsonl"
+    invalid.write_text("keep", encoding="utf-8")
+    directory = output / "cards-normalized-1111111111111111-2222222222222222.jsonl"
+    directory.mkdir()
+    outside = tmp_path / "cards-normalized-3333333333333333-4444444444444444.jsonl"
+    outside.write_text("outside", encoding="utf-8")
+    link = output / "cards-normalized-5555555555555555-6666666666666666.jsonl"
+    try:
+        link.symlink_to(outside)
+    except OSError:
+        pytest.skip("symbolic link を作成できない環境")
+
+    cleaned = cleanup_preprocess(output, delete=True)
+
+    assert cleaned["deleted"] == []
+    assert active.exists() and invalid.exists() and directory.exists() and link.is_symlink()
+    assert outside.exists()
+
+
+@pytest.mark.parametrize("changes", [
+    {"completed": False},
+    {"metadata_schema_version": 0},
+    {"record_schema_version": 0},
+    {"output_format": "json"},
+    {"output_data_file": "../outside.jsonl"},
+])
+def test_cleanup_rejects_invalid_metadata_without_deleting(tmp_path, changes):
+    metadata, _ = source_files(tmp_path)
+    output = tmp_path / "out"
+    result = preprocess(metadata, output)
+    active = Path(result["output_data_path"])
+    metadata_path = Path(result["output_metadata_path"])
+    orphan = output / "cards-normalized-0123456789abcdef-fedcba9876543210.jsonl"
+    orphan.write_text("orphan\n", encoding="utf-8")
+    output_metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    output_metadata.update(changes)
+    metadata_path.write_text(json.dumps(output_metadata), encoding="utf-8")
+
+    with pytest.raises(PreprocessError):
+        cleanup_preprocess(output, delete=True)
+
+    assert active.exists() and orphan.exists() and metadata_path.exists()
+
+
+def test_cleanup_handles_no_candidates_and_missing_output(tmp_path):
+    assert cleanup_preprocess(tmp_path / "missing") == {"candidates": [], "deleted": []}
+    output = tmp_path / "out"
+    metadata, _ = source_files(tmp_path)
+    preprocess(metadata, output)
+    assert cleanup_preprocess(output) == {"candidates": [], "deleted": []}
+
+
+def test_cleanup_pure_selection_only_accepts_generation_names():
+    active = "cards-normalized-0123456789abcdef-fedcba9876543210.jsonl"
+    orphan = "cards-normalized-1111111111111111-2222222222222222.jsonl"
+    metadata = {
+        "metadata_schema_version": 1,
+        "completed": True,
+        "record_schema_version": 1,
+        "output_format": "jsonl",
+        "sort_order": "card_id_ascending",
+        "preprocessing_cache_key": "cache-key",
+        "output_data_file": active,
+    }
+    referenced = referenced_preprocess_generation_names([metadata])
+
+    assert referenced == {active}
+    assert unreferenced_preprocess_generation_names([active, orphan, "other.jsonl"], referenced) == [orphan]
 
 def test_deep_verify_accepts_valid_preprocessing_cache(tmp_path):
     metadata, _ = source_files(tmp_path, [card(2), card(1)])
