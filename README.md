@@ -152,6 +152,17 @@ ygonlp analyze-timeseries --input-metadata <measurement-metadata-json> --output 
 
 この分析はカードテキスト長とTCG初出候補時期の記述的な関連を示すものであり、因果関係を推論するものではありません。
 
+## 年別カードrelease count分析
+
+`analyze-releases` はmeasurement metadataを入力境界として完全検証した測定JSONLから、TCG初出候補年ごとのカード数を集計します。`tcg_date` はcandidate TCG first-appearance dateであり、printing数やreprint数ではありません。欠損日付を推測せず、OCG日付へfallbackもしません。`tcg_date=null` とUTC cutoffより未来の日付は集計から除外し、それぞれの件数をmetadataに記録します。
+
+```text
+ygonlp analyze-releases --input-metadata <measurement-metadata-json> --output <output-directory> --dry-run
+ygonlp analyze-releases --input-metadata <measurement-metadata-json> --output <output-directory>
+```
+
+出力は年別overallと年×`card_type`別の `release_count`、`cumulative_release_count` で、最初の集計対象年からcutoff年まで0件年も含みます。cutoff年はcutoffが12月31日より前の場合だけ `is_partial_year=true` です。JSON、CSV、Markdown、metadataを同時にatomic保存し、API通信は行いません。この記述集計は因果推論や予測を行いません。詳細は[release count仕様](docs/release-counts-spec.md)を参照してください。
+
 ## 効果テキスト類似検索
 
 `search-similar` は前処理metadataを入力境界として完全検証したJSONLだけを用い、API通信をせずに正規化済みテキストの語彙的な類似カードを検索します。queryは完全一致の `card_id` または完全一致の `name` のいずれか一方で指定します。同名カードが複数ある場合は曖昧として `card_id` を要求します。query自身と空テキストは除外し、重複テキストでもカードごとに別結果として保持します。
