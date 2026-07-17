@@ -9,6 +9,7 @@ from .collect import collect, dry_run_lines as collect_dry_run_lines
 from .measure import MeasureError, dry_run_lines as measure_dry_run_lines, measure
 from .preprocess import (
     PreprocessError,
+    cleanup_preprocess,
     dry_run_lines as preprocess_dry_run_lines,
     preprocess,
     verify_preprocessed_cache,
@@ -48,6 +49,12 @@ def build_parser() -> argparse.ArgumentParser:
         required=True,
         help="preprocessing metadata JSON",
     )
+    cleanup_preprocess_parser = subparsers.add_parser(
+        "cleanup-preprocess",
+        help="未参照の前処理JSONL generationを検出・整理する",
+    )
+    cleanup_preprocess_parser.add_argument("--output", type=Path, required=True, help="前処理output directory")
+    cleanup_preprocess_parser.add_argument("--delete", action="store_true", help="候補の未参照JSONLを削除する")
     return parser
 
 
@@ -57,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         "collect",
         "preprocess",
         "verify-preprocess",
+        "cleanup-preprocess",
         "measure",
         "summarize",
     }:
@@ -78,6 +86,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"data file path: {result['data_path']}")
             print(f"record count: {result['record_count']}")
             print(f"preprocessing cache key: {result['preprocessing_cache_key']}")
+        elif args.command == "cleanup-preprocess":
+            result = cleanup_preprocess(args.output, delete=args.delete)
+            for path in result["deleted"] if args.delete else result["candidates"]:
+                print(path)
         elif args.dry_run:
             if args.command == "preprocess":
                 print("\n".join(preprocess_dry_run_lines(args.input_metadata, args.output, force=args.force)))

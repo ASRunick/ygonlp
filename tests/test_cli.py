@@ -30,7 +30,7 @@ def test_root_help(capsys):
         main(["--help"])
     assert exc.value.code == 0
     output = capsys.readouterr().out
-    assert "collect" in output and "preprocess" in output and "measure" in output and "summarize" in output
+    assert "collect" in output and "preprocess" in output and "measure" in output and "summarize" in output and "cleanup-preprocess" in output
 
 
 def test_collect_help(capsys):
@@ -193,3 +193,32 @@ def test_verify_preprocess_requires_input_metadata(capsys):
 
     assert exc.value.code != 0
     assert "--input-metadata" in capsys.readouterr().err
+
+
+def test_cleanup_preprocess_cli_dry_run_delete_and_required_output(tmp_path: Path, capsys):
+    raw_metadata = raw_source(tmp_path)
+    output = tmp_path / "preprocessed"
+    preprocess(raw_metadata, output)
+    orphan = output / "cards-normalized-0123456789abcdef-fedcba9876543210.jsonl"
+    orphan.write_text("orphan\n", encoding="utf-8")
+
+    assert main(["cleanup-preprocess", "--output", str(output)]) == 0
+    assert capsys.readouterr().out.strip() == str(orphan)
+    assert orphan.exists()
+    assert main(["cleanup-preprocess", "--output", str(output), "--delete"]) == 0
+    assert capsys.readouterr().out.strip() == str(orphan)
+    assert not orphan.exists()
+    with pytest.raises(SystemExit) as exc:
+        main(["cleanup-preprocess"])
+    assert exc.value.code != 0
+    assert "--output" in capsys.readouterr().err
+
+
+def test_cleanup_preprocess_cli_failure_returns_stderr(monkeypatch, tmp_path, capsys):
+    import ygonlp.cli as cli
+
+    monkeypatch.setattr(cli, "cleanup_preprocess", lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("cleanup失敗")))
+    assert main(["cleanup-preprocess", "--output", str(tmp_path)]) == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "cleanup失敗" in captured.err

@@ -5,6 +5,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
+import stat
 import tempfile
 from collections import Counter
 from dataclasses import dataclass
@@ -21,6 +23,9 @@ OUTPUT_FORMAT = "jsonl"
 SORT_ORDER = "card_id_ascending"
 KEY_PREFIX_LENGTH = 16
 CONTENT_PREFIX_LENGTH = 16
+_HEX_PREFIX = rf"[0-9a-f]{{{KEY_PREFIX_LENGTH}}}"
+_GENERATION_NAME = re.compile(rf"^cards-normalized-{_HEX_PREFIX}-{_HEX_PREFIX}\.jsonl$")
+_METADATA_NAME = re.compile(rf"^cards-normalized-{_HEX_PREFIX}\.metadata\.json$")
 
 RECORD_FIELDS = (
     "schema_version", "card_id", "name", "card_type", "frame_type", "race", "archetype",
@@ -268,6 +273,95 @@ def output_metadata_path(output: Path, key: str) -> Path:
 
 def output_data_path(output: Path, key: str, checksum: str) -> Path:
     return output / f"cards-normalized-{key[:KEY_PREFIX_LENGTH]}-{checksum[:CONTENT_PREFIX_LENGTH]}.jsonl"
+
+
+def is_preprocess_generation_name(name: str) -> bool:
+    """前処理が生成するJSONL generation名だけを受け入れる。"""
+    return bool(_GENERATION_NAME.fullmatch(name))
+
+
+def referenced_preprocess_generation_names(metadata_values: Iterable[Any]) -> set[str]:
+    """有効なmetadataが安全に指すgeneration名を集める（I/Oなし）。"""
+    referenced: set[str] = set()
+    for metadata in metadata_values:
+        if (
+            not isinstance(metadata, dict)
+            or metadata.get("metadata_schema_version") != PREPROCESSING_METADATA_SCHEMA_VERSION
+            or metadata.get("completed") is not True
+            or metadata.get("record_schema_version") != RECORD_SCHEMA_VERSION
+            or metadata.get("output_format") != OUTPUT_FORMAT
+            or metadata.get("sort_order") != SORT_ORDER
+            or not isinstance(metadata.get("preprocessing_cache_key"), str)
+            or not metadata["preprocessing_cache_key"]
+        ):
+            raise PreprocessError("前処理metadataが不正です")
+        name = metadata.get("output_data_file")
+        if not isinstance(name, str) or not is_preprocess_generation_name(name):
+            raise PreprocessError("前処理metadataが指すJSONL fileが不正です")
+        referenced.add(name)
+    return referenced
+
+
+def unreferenced_preprocess_generation_names(
+    file_names: Iterable[str], referenced_names: set[str]
+) -> list[str]:
+    """候補名から、metadataに参照されていないgenerationだけを選ぶ（I/Oなし）。"""
+    return sorted(
+        name for name in file_names
+        if is_preprocess_generation_name(name) and name not in referenced_names
+    )
+
+
+def _regular_child_names(directory: Path) -> list[str]:
+    """directory直下のsymlinkではない通常ファイル名だけを返す。"""
+    try:
+        names: list[str] = []
+        for child in directory.iterdir():
+            if child.is_symlink():
+                continue
+            try:
+                if stat.S_ISREG(child.stat(follow_symlinks=False).st_mode):
+                    names.append(child.name)
+            except OSError:
+                continue
+        return names
+    except OSError as exc:
+        raise PreprocessError("前処理output directoryを読み込めません") from exc
+
+
+def cleanup_preprocess(output: Path, *, delete: bool = False) -> dict[str, list[Path]]:
+    """未参照の前処理JSONL generationを検出し、明示時だけ削除する。"""
+    try:
+        if not output.exists():
+            return {"candidates": [], "deleted": []}
+        if output.is_symlink() or not output.is_dir():
+            raise PreprocessError("前処理output directoryが不正です")
+    except OSError as exc:
+        raise PreprocessError("前処理output directoryを確認できません") from exc
+
+    names = _regular_child_names(output)
+    metadata_values: list[Any] = []
+    for name in names:
+        if not _METADATA_NAME.fullmatch(name):
+            continue
+        try:
+            metadata_values.append(_read_json(output / name))
+        except (OSError, UnicodeDecodeError, ValueError) as exc:
+            raise PreprocessError("前処理metadataを読み込めません") from exc
+
+    referenced = referenced_preprocess_generation_names(metadata_values)
+    candidates = [output / name for name in unreferenced_preprocess_generation_names(names, referenced)]
+    deleted: list[Path] = []
+    if delete:
+        for candidate in candidates:
+            try:
+                if candidate.is_symlink() or not stat.S_ISREG(candidate.stat(follow_symlinks=False).st_mode):
+                    continue
+                candidate.unlink()
+                deleted.append(candidate)
+            except OSError as exc:
+                raise PreprocessError("未参照の前処理JSONLを削除できません") from exc
+    return {"candidates": candidates, "deleted": deleted}
 
 
 def _is_int(value: Any) -> bool:
