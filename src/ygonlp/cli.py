@@ -18,6 +18,7 @@ from .summarize import SummarizeError, dry_run_lines as summarize_dry_run_lines,
 from .timeseries import TimeSeriesError, analyze_timeseries, dry_run_lines as timeseries_dry_run_lines
 from .similarity import SimilarityError, search_similar
 from .vocabulary import VocabularyError, analyze_topics, analyze_vocabulary
+from .prices import PriceSnapshotError, snapshot_prices
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -79,6 +80,10 @@ def build_parser() -> argparse.ArgumentParser:
     topics_parser.add_argument("--min-df", type=int, default=1, help="正の最小document frequency")
     topics_parser.add_argument("--english-stopwords", action="store_true", help="組み込み英語stopwordを除外")
     topics_parser.add_argument("--force", action="store_true", help="有効なtopic分析出力を無視して再生成")
+    prices_parser = subparsers.add_parser("snapshot-prices", help="収集済みraw dataからvendor価格snapshotを生成する")
+    prices_parser.add_argument("--input-metadata", type=Path, required=True, help="collection metadata JSON")
+    prices_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
+    prices_parser.add_argument("--force", action="store_true", help="有効な価格snapshotを無視して再生成")
     verify_preprocess_parser = subparsers.add_parser(
         "verify-preprocess",
         help="前処理cacheを全record単位で深く検証する",
@@ -111,6 +116,7 @@ def main(argv: list[str] | None = None) -> int:
         "search-similar",
         "analyze-vocabulary",
         "analyze-topics",
+        "snapshot-prices",
     }:
         build_parser().print_help()
         return 0
@@ -161,6 +167,11 @@ def main(argv: list[str] | None = None) -> int:
                                     english_stopwords=args.english_stopwords, force=args.force)
             print(f"status: {result['status']}")
             print(f"topics metadata path: {result['output_metadata_path']}")
+        elif args.command == "snapshot-prices":
+            result = snapshot_prices(args.input_metadata, args.output, force=args.force)
+            print(f"status: {result['status']}")
+            print(f"price snapshot data path: {result['output_data_path']}")
+            print(f"price snapshot metadata path: {result['output_metadata_path']}")
         elif args.dry_run:
             if args.command == "preprocess":
                 print("\n".join(preprocess_dry_run_lines(args.input_metadata, args.output, force=args.force)))
@@ -187,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
             for code, count in result["warnings"].items():
                 print(f"warning: {code}: {count} records", file=__import__("sys").stderr)
         return 0
-    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, SimilarityError, VocabularyError) as exc:
+    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, SimilarityError, VocabularyError, PriceSnapshotError) as exc:
         import sys
 
         print(f"エラー: {exc}", file=sys.stderr)

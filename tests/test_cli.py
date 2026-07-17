@@ -190,6 +190,14 @@ def test_vocabulary_topic_help(capsys, command):
     assert "--input-metadata" in capsys.readouterr().out
 
 
+def test_snapshot_prices_help(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["snapshot-prices", "--help"])
+    assert exc.value.code == 0
+    text = capsys.readouterr().out
+    assert "--input-metadata" in text and "--output" in text and "--force" in text
+
+
 def test_summarize_dry_run_via_cli_is_read_only(tmp_path: Path, capsys):
     raw_metadata = raw_source(tmp_path)
     preprocessed = preprocess(raw_metadata, tmp_path / "preprocessed")

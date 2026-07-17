@@ -181,6 +181,16 @@ ygonlp analyze-topics --input-metadata <preprocessing-metadata-json> --output <d
 
 両コマンドはJSON、CSV、Markdown、metadataをatomicに保存し、source checksum、scikit-learn version、class名、主要parameter、ranking/orderを記録します。LDA topicはmodel index順であり、意味的・公式のラベルは付けません。これは探索的な語彙分析であり、公式mechanic、意味的真実、ゲームプレイ上の同等性を示すものではありません。
 
+## 価格snapshot
+
+`snapshot-prices` はIssue #1の検証済みcollection metadataとraw JSONだけから、API通信なしでvendor別の価格snapshot JSONLを生成します。snapshot timestampはcollection metadataのUTC `fetched_at` です。`card_prices` の複数値はカード単位・vendor別のversion横断最小値として保存しますが、printing、edition、rarity、condition単位の価格を表すものではありません。
+
+```text
+ygonlp snapshot-prices --input-metadata <collection-metadata-json> --output <directory>
+```
+
+対応vendorはcardmarket（EUR）、tcgplayer / ebay / amazon / coolstuffinc（USD）です。通貨換算やvendor間の統合は行いません。価格はDecimalとして検証し、raw stringとdecimal stringをともに保存します。`"0.00"` は有効な観測値であり、zero flagを記録します。metadataの`missing_vendor_field_counts`は、全`card_prices` objectを確認してもnon-null値がない**card×vendor pair**数です。
+
 ## 初期リポジトリ構成
 
 ```text
