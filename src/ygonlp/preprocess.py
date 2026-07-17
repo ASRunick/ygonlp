@@ -270,6 +270,59 @@ def output_data_path(output: Path, key: str, checksum: str) -> Path:
     return output / f"cards-normalized-{key[:KEY_PREFIX_LENGTH]}-{checksum[:CONTENT_PREFIX_LENGTH]}.jsonl"
 
 
+def _is_int(value: Any) -> bool:
+    return type(value) is int
+
+
+def validate_preprocessed_record(
+    record: Any,
+    previous_card_id: int | None,
+) -> int:
+    """前処理JSONLの1 recordをschema・型・順序まで検証する。"""
+    if not isinstance(record, dict) or tuple(record) != RECORD_FIELDS:
+        raise PreprocessError("前処理JSONLのrecord schemaまたはキー順が不正です")
+
+    if (
+        not _is_int(record.get("schema_version"))
+        or record["schema_version"] != RECORD_SCHEMA_VERSION
+    ):
+        raise PreprocessError("前処理JSONLのrecord schema versionが不正です")
+
+    if not _is_int(record.get("card_id")):
+        raise PreprocessError("前処理JSONLのcard_idが不正です")
+
+    card_id = record["card_id"]
+    if previous_card_id is not None and card_id <= previous_card_id:
+        raise PreprocessError("前処理JSONLのcard_id順序または一意性が不正です")
+
+    for field in ("name", "card_type", "frame_type", "text_kind"):
+        if not isinstance(record.get(field), str):
+            raise PreprocessError(f"前処理JSONLの{field}が不正です")
+
+    for field in (
+        "race",
+        "archetype",
+        "text_raw",
+        "text_normalized",
+        "exclusion_reason",
+        "tcg_date",
+        "ocg_date",
+    ):
+        if record.get(field) is not None and not isinstance(record.get(field), str):
+            raise PreprocessError(f"前処理JSONLの{field}が不正です")
+
+    if (
+        type(record.get("has_text")) is not bool
+        or type(record.get("is_effect_text_target")) is not bool
+    ):
+        raise PreprocessError("前処理JSONLのboolean fieldが不正です")
+
+    if not _is_int(record.get("source_index")):
+        raise PreprocessError("前処理JSONLのsource_indexが不正です")
+
+    return card_id
+
+
 def valid_output(output: Path, key: str) -> bool:
     try:
         metadata = _read_json(output_metadata_path(output, key))
@@ -292,6 +345,79 @@ def valid_output(output: Path, key: str) -> bool:
         return all(list(record) == list(RECORD_FIELDS) for record in records)
     except (OSError, UnicodeDecodeError, ValueError, TypeError):
         return False
+
+def verify_preprocessed_cache(metadata_path: Path) -> dict[str, Any]:
+    """前処理cacheを全record単位で深く検証する。"""
+    try:
+        metadata = _read_json(metadata_path)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PreprocessError("前処理metadataを読み込めません") from exc
+
+    if not isinstance(metadata, dict):
+        raise PreprocessError("前処理metadataはobjectである必要があります")
+
+    required_metadata = {
+        "metadata_schema_version": PREPROCESSING_METADATA_SCHEMA_VERSION,
+        "completed": True,
+        "record_schema_version": RECORD_SCHEMA_VERSION,
+        "sort_order": SORT_ORDER,
+        "output_format": OUTPUT_FORMAT,
+    }
+    if any(metadata.get(field) != value for field, value in required_metadata.items()):
+        raise PreprocessError("前処理metadataのschema、完了状態、または出力定義が不正です")
+
+    if (
+        not isinstance(metadata.get("preprocessing_cache_key"), str)
+        or not metadata["preprocessing_cache_key"]
+    ):
+        raise PreprocessError("前処理metadataのcache keyが不正です")
+
+    if (
+        not _is_int(metadata.get("output_record_count"))
+        or metadata["output_record_count"] <= 0
+    ):
+        raise PreprocessError("前処理metadataのoutput record countが不正です")
+
+    checksum = metadata.get("output_sha256")
+    if not isinstance(checksum, str) or len(checksum) != 64:
+        raise PreprocessError("前処理metadataのoutput checksumが不正です")
+
+    data_path = _safe_child(metadata_path.parent, metadata.get("output_data_file"))
+    if data_path is None or not data_path.is_file():
+        raise PreprocessError("前処理metadataが指すJSONL fileが不正です")
+
+    try:
+        raw = data_path.read_bytes()
+    except OSError as exc:
+        raise PreprocessError("前処理JSONLを読み込めません") from exc
+
+    if hashlib.sha256(raw).hexdigest() != checksum:
+        raise PreprocessError("前処理JSONL checksumがmetadataと一致しません")
+
+    if raw.startswith(b"\xef\xbb\xbf") or b"\r" in raw or not raw.endswith(b"\n"):
+        raise PreprocessError("前処理JSONLのエンコーディングまたは改行が不正です")
+
+    try:
+        lines = raw.decode("utf-8").splitlines()
+        records = [json.loads(line) for line in lines]
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise PreprocessError("前処理JSONLをparseできません") from exc
+
+    if len(records) != metadata["output_record_count"]:
+        raise PreprocessError("前処理JSONLのrecord countがmetadataと一致しません")
+
+    previous_card_id: int | None = None
+    for record in records:
+        previous_card_id = validate_preprocessed_record(record, previous_card_id)
+
+    return {
+        "status": "valid",
+        "metadata_path": metadata_path,
+        "data_path": data_path,
+        "record_count": len(records),
+        "preprocessing_cache_key": metadata["preprocessing_cache_key"],
+        "output_sha256": checksum,
+    }
 
 
 def _write_atomic(path: Path, content: bytes) -> None:

@@ -107,7 +107,11 @@ ygonlp export --format json
 ```text
 ygonlp preprocess --input-metadata <raw-metadata-json> --output <output-directory> --dry-run
 ygonlp preprocess --input-metadata <raw-metadata-json> --output <output-directory>
+ygonlp verify-preprocess --input-metadata <preprocessing-metadata-json>
 ```
+
+`verify-preprocess` はAPI通信やファイル変更を行わず、前処理JSONLの全recordについてschema、固定キー順、`card_id` 昇順・一意性、metadataとのrecord count整合を検証します。
+
 
 ## 基本テキスト指標
 

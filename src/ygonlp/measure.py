@@ -14,9 +14,10 @@ from typing import Any, Callable, Iterable
 
 from .preprocess import (
     PREPROCESSING_METADATA_SCHEMA_VERSION,
-    RECORD_FIELDS as PREPROCESSING_RECORD_FIELDS,
     RECORD_SCHEMA_VERSION as PREPROCESSING_RECORD_SCHEMA_VERSION,
     SORT_ORDER as PREPROCESSING_SORT_ORDER,
+    PreprocessError,
+    validate_preprocessed_record,
 )
 
 MEASUREMENT_RECORD_SCHEMA_VERSION = 1
@@ -90,28 +91,6 @@ def _is_int(value: Any) -> bool:
     return type(value) is int
 
 
-def _validate_preprocessed_record(record: Any, previous_card_id: int | None) -> int:
-    if not isinstance(record, dict) or tuple(record) != PREPROCESSING_RECORD_FIELDS:
-        raise MeasureError("前処理JSONLのrecord schemaが不正です")
-    if not _is_int(record.get("schema_version")) or record["schema_version"] != PREPROCESSING_RECORD_SCHEMA_VERSION:
-        raise MeasureError("前処理JSONLのrecord schema versionが不正です")
-    if not _is_int(record.get("card_id")):
-        raise MeasureError("前処理JSONLのcard_idが不正です")
-    card_id = record["card_id"]
-    if previous_card_id is not None and card_id <= previous_card_id:
-        raise MeasureError("前処理JSONLのcard_id順序または一意性が不正です")
-    for field in ("name", "card_type", "frame_type", "text_kind"):
-        if not isinstance(record.get(field), str):
-            raise MeasureError(f"前処理JSONLの{field}が不正です")
-    for field in ("race", "archetype", "text_raw", "text_normalized", "exclusion_reason", "tcg_date", "ocg_date"):
-        if record.get(field) is not None and not isinstance(record.get(field), str):
-            raise MeasureError(f"前処理JSONLの{field}が不正です")
-    if type(record.get("has_text")) is not bool or type(record.get("is_effect_text_target")) is not bool:
-        raise MeasureError("前処理JSONLのboolean fieldが不正です")
-    if not _is_int(record.get("source_index")):
-        raise MeasureError("前処理JSONLのsource_indexが不正です")
-    return card_id
-
 
 def load_source(metadata_path: Path) -> Source:
     """前処理metadataを信頼境界として測定入力を完全に検証する。"""
@@ -156,8 +135,11 @@ def load_source(metadata_path: Path) -> Source:
     if len(records) != metadata["output_record_count"]:
         raise MeasureError("前処理JSONLのrecord countがmetadataと一致しません")
     previous_card_id: int | None = None
-    for record in records:
-        previous_card_id = _validate_preprocessed_record(record, previous_card_id)
+    try:
+        for record in records:
+            previous_card_id = validate_preprocessed_record(record, previous_card_id)
+    except PreprocessError as exc:
+        raise MeasureError(str(exc)) from exc
     return Source(metadata_path=metadata_path, data_path=data_path, metadata=metadata, records=records)
 
 

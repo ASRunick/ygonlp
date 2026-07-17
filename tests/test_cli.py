@@ -171,3 +171,25 @@ def test_summarize_dry_run_via_cli_is_read_only(tmp_path: Path, capsys):
     text = capsys.readouterr().out
     assert "overall count:" in text and "summary required: yes" in text
     assert not output.exists()
+def test_verify_preprocess_via_cli(tmp_path: Path, capsys):
+    raw_metadata = raw_source(tmp_path)
+    preprocessed = preprocess(raw_metadata, tmp_path / "preprocessed")
+
+    assert main([
+        "verify-preprocess",
+        "--input-metadata",
+        str(preprocessed["output_metadata_path"]),
+    ]) == 0
+
+    output = capsys.readouterr().out
+    assert "status: valid" in output
+    assert "record count: 1" in output
+    assert "preprocessing cache key:" in output
+
+
+def test_verify_preprocess_requires_input_metadata(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["verify-preprocess"])
+
+    assert exc.value.code != 0
+    assert "--input-metadata" in capsys.readouterr().err
