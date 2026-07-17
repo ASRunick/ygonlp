@@ -12,7 +12,7 @@
 
 ## 開発環境
 
-Python 3.11を使用します。実行時の集計依存には `numpy>=2.0,<3` を含みます。conda環境は次で作成できます。
+Python 3.11を使用します。実行時の集計依存には `numpy>=2.0,<3` と `scikit-learn>=1.9,<2` を含みます。conda環境は次で作成できます。
 
 ```text
 conda env create -f environment.yml
@@ -151,6 +151,24 @@ ygonlp analyze-timeseries --input-metadata <measurement-metadata-json> --output 
 ```
 
 この分析はカードテキスト長とTCG初出候補時期の記述的な関連を示すものであり、因果関係を推論するものではありません。
+
+## 効果テキスト類似検索
+
+`search-similar` は前処理metadataを入力境界として完全検証したJSONLだけを用い、API通信をせずに正規化済みテキストの語彙的な類似カードを検索します。queryは完全一致の `card_id` または完全一致の `name` のいずれか一方で指定します。同名カードが複数ある場合は曖昧として `card_id` を要求します。query自身と空テキストは除外し、重複テキストでもカードごとに別結果として保持します。
+
+```text
+ygonlp search-similar \
+  --input-metadata <preprocessing-metadata-json> \
+  --card-id <card-id> \
+  --output <output-directory> \
+  --top-n 10 \
+  --card-type "Effect Monster" \
+  --release-status released
+```
+
+比較には scikit-learn の `TfidfVectorizer`（Unicode token pattern、word unigram、lowercase、L2 normalization、IDF/smooth IDF、有効なsublinear TFなし、`float64`）と cosine similarity を使います。正の生cosine scoreだけを降順、完全に同値なら`card_id`昇順で返し、公開出力のscoreだけを6桁へ丸めます。JSON、CSV、Markdown、metadataは同時にatomic保存され、source checksum、query、filter、`top_n`、ranking定義、scikit-learn version、vectorizer classと主要parameterをmetadataに記録します。`--force` は有効なキャッシュを無視して再生成します。
+
+この語彙的類似性は、意味的な同一性、ゲームプレイ上の等価性、カード強度、デッキ推薦を意味しません。
 
 ## 初期リポジトリ構成
 
