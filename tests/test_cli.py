@@ -182,6 +182,14 @@ def test_search_similar_help(capsys):
     assert "--input-metadata" in text and "--card-id" in text and "--name" in text and "--force" in text
 
 
+@pytest.mark.parametrize("command", ["analyze-vocabulary", "analyze-topics"])
+def test_vocabulary_topic_help(capsys, command):
+    with pytest.raises(SystemExit) as exc:
+        main([command, "--help"])
+    assert exc.value.code == 0
+    assert "--input-metadata" in capsys.readouterr().out
+
+
 def test_summarize_dry_run_via_cli_is_read_only(tmp_path: Path, capsys):
     raw_metadata = raw_source(tmp_path)
     preprocessed = preprocess(raw_metadata, tmp_path / "preprocessed")
