@@ -28,11 +28,11 @@ REPRESENTATIVE_RANKING = "raw_document_topic_proportion_desc_card_id_asc_v1"
 TOPIC_ORDERING = "model_topic_index_ascending_v1"
 VOCABULARY_IDENTIFIER = "count_vectorizer_vocabulary_v1"
 TOPICS_IDENTIFIER = "count_vectorizer_lda_topics_v1"
-VOCABULARY_METADATA_SCHEMA_VERSION = 1
+VOCABULARY_METADATA_SCHEMA_VERSION = 2
 VOCABULARY_JSON_SCHEMA_VERSION = 1
 VOCABULARY_CSV_SCHEMA_VERSION = 1
 VOCABULARY_MARKDOWN_SCHEMA_VERSION = 1
-TOPICS_METADATA_SCHEMA_VERSION = 1
+TOPICS_METADATA_SCHEMA_VERSION = 2
 TOPICS_JSON_SCHEMA_VERSION = 1
 TOPICS_CSV_SCHEMA_VERSION = 1
 TOPICS_MARKDOWN_SCHEMA_VERSION = 1
@@ -277,10 +277,15 @@ def _read_json(path: Path) -> Any:
 
 
 def _expected(source: Source, kind: str, key: str, parameters: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
+    tokenizer = CountVectorizer(token_pattern=TOKEN_PATTERN).build_tokenizer()
+    non_tokenizable_card_ids = [record["card_id"] for record in source.records
+                                if record["text_normalized"].strip() and not tokenizer(record["text_normalized"])]
     return {"completed": True, "analysis_cache_key": key, "analysis_kind": kind,
             "source_preprocessing_metadata_file": source.metadata_path.name, "source_preprocessing_data_file": source.data_path.name,
             "source_preprocessing_cache_key": source.metadata["preprocessing_cache_key"], "source_preprocessing_checksum": source.metadata["output_sha256"],
-            "source_record_count": len(source.records), "parameters": parameters, "output_formats": list(OUTPUT_FORMAT_ORDER),
+            "source_record_count": len(source.records), "non_tokenizable_document_count": len(non_tokenizable_card_ids),
+            "non_tokenizable_card_ids": non_tokenizable_card_ids,
+            "parameters": parameters, "output_formats": list(OUTPUT_FORMAT_ORDER),
             "result_document_count": result["document_count"], **_definition(kind, parameters)}
 
 
