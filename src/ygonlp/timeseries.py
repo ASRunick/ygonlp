@@ -1,0 +1,207 @@
+"""測定済みLength MetricsのTCG初出候補年別記述統計。"""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import io
+import json
+from collections import defaultdict
+from datetime import date, datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Iterable
+
+from .summarize import (
+    FLOAT_PRECISION, METRICS, OUTPUT_FORMAT_ORDER, OUTPUT_SUFFIXES, PERCENTILE_METHOD,
+    PROJECT_VERSION, STANDARD_DEVIATION_DDOF, STATISTIC_FIELDS, STATISTIC_IDENTIFIER,
+    SummarizeError, _best_effort_unlink, _read_json, _safe_child, _write_atomic,
+    load_source, metric_statistics,
+)
+
+TIMESERIES_METADATA_SCHEMA_VERSION = 1
+TIMESERIES_JSON_SCHEMA_VERSION = 1
+TIMESERIES_IDENTIFIER = "effect_text_length_tcg_release_timeseries_v1"
+GROUPING_IDENTIFIER = "tcg_year_and_tcg_year_card_type_ascending_v1"
+DATE_DEFINITION = "tcg_date_adopted_tcg_set_source_first_release_candidate_date_v1"
+CURRENT_DATE_CUTOFF_POLICY = "tcg_date_after_utc_current_date_excluded_v1"
+OUTPUT_ORDER = "by_tcg_year_then_by_tcg_year_card_type_year_ascending_card_type_ascending_metric_order_v1"
+CSV_FIELDS = ("scope", "year", "card_type", "metric", *STATISTIC_FIELDS)
+AtomicWriter = Callable[[Path, bytes], None]
+
+
+class TimeSeriesError(RuntimeError):
+    """時系列分析入力または保存のFatal error。"""
+
+
+def _group(scope: str, year: str, card_type: str | None, records: Iterable[dict[str, Any]]) -> dict[str, Any]:
+    listed = list(records)
+    return {
+        "scope": scope, "year": year, "card_type": card_type, "group_count": len(listed),
+        "metrics": {metric: metric_statistics(record[metric] for record in listed) for metric in METRICS},
+    }
+
+
+def build_timeseries(records: Iterable[dict[str, Any]], cutoff: date) -> dict[str, Any]:
+    """released recordだけを年別・年×card_type別に決定論的に集計する。"""
+    yearly: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    yearly_type: dict[tuple[str, str], list[dict[str, Any]]] = defaultdict(list)
+    missing = future = 0
+    for record in records:
+        value = record["tcg_date"]
+        if value is None:
+            missing += 1
+            continue
+        if value > cutoff.isoformat():
+            future += 1
+            continue
+        year = value[:4]
+        yearly[year].append(record)
+        yearly_type[(year, record["card_type"])].append(record)
+    return {
+        "schema_version": TIMESERIES_JSON_SCHEMA_VERSION,
+        "timeseries_identifier": TIMESERIES_IDENTIFIER,
+        "date_definition": DATE_DEFINITION,
+        "current_date_cutoff": cutoff.isoformat(),
+        "missing_date_count": missing,
+        "future_date_count": future,
+        "included_record_count": sum(len(value) for value in yearly.values()),
+        "by_tcg_year": [_group("by_tcg_year", year, None, yearly[year]) for year in sorted(yearly)],
+        "by_tcg_year_card_type": [
+            _group("by_tcg_year_card_type", year, card_type, yearly_type[(year, card_type)])
+            for year, card_type in sorted(yearly_type)
+        ],
+        "statistic_definitions": {
+            "identifier": STATISTIC_IDENTIFIER, "percentile_method": PERCENTILE_METHOD,
+            "standard_deviation_ddof": STANDARD_DEVIATION_DDOF, "float_precision": FLOAT_PRECISION,
+        },
+    }
+
+
+def timeseries_cache_key(source: Any, cutoff: date) -> str:
+    payload = {
+        "metadata_schema_version": TIMESERIES_METADATA_SCHEMA_VERSION,
+        "json_schema_version": TIMESERIES_JSON_SCHEMA_VERSION,
+        "source_measurement_cache_key": source.metadata["measurement_cache_key"],
+        "source_measurement_checksum": source.metadata["output_checksum"],
+        "metrics": METRICS, "grouping_identifier": GROUPING_IDENTIFIER,
+        "date_definition": DATE_DEFINITION, "current_date_cutoff": cutoff.isoformat(),
+        "current_date_cutoff_policy": CURRENT_DATE_CUTOFF_POLICY,
+        "statistic_identifier": STATISTIC_IDENTIFIER, "output_order": OUTPUT_ORDER,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+def _rows(result: dict[str, Any]) -> list[dict[str, Any]]:
+    rows = []
+    for group in [*result["by_tcg_year"], *result["by_tcg_year_card_type"]]:
+        for metric in METRICS:
+            rows.append({"scope": group["scope"], "year": group["year"], "card_type": group["card_type"] or "", "metric": metric, **group["metrics"][metric]})
+    return rows
+
+
+def _value(value: Any) -> str | int:
+    if value is None:
+        return ""
+    return f"{value:.{FLOAT_PRECISION}f}" if isinstance(value, float) else value
+
+
+def serialize_json(result: dict[str, Any]) -> bytes:
+    return (json.dumps(result, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+
+
+def serialize_csv(result: dict[str, Any]) -> bytes:
+    output = io.StringIO(newline="")
+    writer = csv.DictWriter(output, fieldnames=CSV_FIELDS, lineterminator="\n")
+    writer.writeheader()
+    for row in _rows(result):
+        writer.writerow({field: _value(row[field]) for field in CSV_FIELDS})
+    return output.getvalue().encode("utf-8")
+
+
+def serialize_markdown(result: dict[str, Any]) -> bytes:
+    lines = ["| " + " | ".join(CSV_FIELDS) + " |", "|" + "|".join("---" for _ in CSV_FIELDS) + "|"]
+    for row in _rows(result):
+        lines.append("| " + " | ".join(str(_value(row[field])).replace("|", "\\|") for field in CSV_FIELDS) + " |")
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def output_metadata_path(output: Path, key: str) -> Path:
+    return output / f"timeseries-{key[:16]}.metadata.json"
+
+
+def output_data_path(output: Path, key: str, checksum: str, suffix: str) -> Path:
+    return output / f"timeseries-{key[:16]}-{checksum[:16]}.{suffix}"
+
+
+def _valid_output(output: Path, key: str, source: Any, cutoff: date) -> bool:
+    try:
+        metadata = _read_json(output_metadata_path(output, key))
+        expected = {"metadata_schema_version": TIMESERIES_METADATA_SCHEMA_VERSION, "completed": True,
+                    "timeseries_cache_key": key, "timeseries_identifier": TIMESERIES_IDENTIFIER,
+                    "source_measurement_cache_key": source.metadata["measurement_cache_key"],
+                    "source_measurement_checksum": source.metadata["output_checksum"],
+                    "date_definition": DATE_DEFINITION, "current_date_cutoff": cutoff.isoformat(),
+                    "current_date_cutoff_policy": CURRENT_DATE_CUTOFF_POLICY, "grouping_identifier": GROUPING_IDENTIFIER,
+                    "output_ordering_identifier": OUTPUT_ORDER}
+        if not isinstance(metadata, dict) or any(metadata.get(name) != value for name, value in expected.items()):
+            return False
+        for name in OUTPUT_FORMAT_ORDER:
+            checksum, size, filename = (metadata.get(f"{name}_output_checksum"), metadata.get(f"{name}_output_file_size"), metadata.get(f"{name}_output_file"))
+            path = _safe_child(output, filename)
+            if not isinstance(checksum, str) or not isinstance(size, int) or filename != output_data_path(output, key, checksum, OUTPUT_SUFFIXES[name]).name or path is None:
+                return False
+            raw = path.read_bytes()
+            if len(raw) != size or hashlib.sha256(raw).hexdigest() != checksum:
+                return False
+        return True
+    except (OSError, ValueError, TypeError):
+        return False
+
+
+def analyze_timeseries(input_metadata: Path, output: Path, *, force: bool = False, dry_run: bool = False, today: date | None = None, writer: AtomicWriter = _write_atomic) -> dict[str, Any]:
+    try:
+        source = load_source(input_metadata)
+    except SummarizeError as exc:
+        raise TimeSeriesError(str(exc)) from exc
+    cutoff = today or datetime.now(timezone.utc).date()
+    key = timeseries_cache_key(source, cutoff)
+    metadata_path = output_metadata_path(output, key)
+    hit = _valid_output(output, key, source, cutoff)
+    if hit and not force and not dry_run:
+        metadata = _read_json(metadata_path)
+        return {"status": "cache_hit", "cache_hit": True, "timeseries_cache_key": key, "source": source, "output_metadata_path": metadata_path, "output_paths": {name: output / metadata[f"{name}_output_file"] for name in OUTPUT_FORMAT_ORDER}}
+    result = build_timeseries(source.records, cutoff)
+    plan = {"status": "planned", "cache_hit": hit, "timeseries_cache_key": key, "source": source, "result": result, "output_metadata_path": metadata_path}
+    if dry_run:
+        return plan
+    contents = {"json": serialize_json(result), "csv": serialize_csv(result), "markdown": serialize_markdown(result)}
+    paths = {name: output_data_path(output, key, hashlib.sha256(contents[name]).hexdigest(), OUTPUT_SUFFIXES[name]) for name in OUTPUT_FORMAT_ORDER}
+    created: list[Path] = []
+    try:
+        output.mkdir(parents=True, exist_ok=True)
+        for name in OUTPUT_FORMAT_ORDER:
+            if paths[name].exists():
+                if not paths[name].is_file() or paths[name].read_bytes() != contents[name]:
+                    raise OSError("同名のtimeseries generationが期待する内容と一致しません")
+            else:
+                writer(paths[name], contents[name]); created.append(paths[name])
+        metadata = {"metadata_schema_version": TIMESERIES_METADATA_SCHEMA_VERSION, "completed": True, "timeseries_cache_key": key,
+                    "timeseries_identifier": TIMESERIES_IDENTIFIER,
+                    "source_measurement_metadata_file": source.metadata_path.name, "source_measurement_data_file": source.data_path.name,
+                    "source_measurement_cache_key": source.metadata["measurement_cache_key"], "source_measurement_checksum": source.metadata["output_checksum"],
+                    "date_definition": DATE_DEFINITION, "current_date_cutoff": cutoff.isoformat(), "current_date_cutoff_policy": CURRENT_DATE_CUTOFF_POLICY,
+                    "missing_date_count": result["missing_date_count"], "future_date_count": result["future_date_count"], "included_record_count": result["included_record_count"],
+                    "grouping_identifier": GROUPING_IDENTIFIER, "output_ordering_identifier": OUTPUT_ORDER, "output_formats": list(OUTPUT_FORMAT_ORDER), "project_version": PROJECT_VERSION}
+        for name in OUTPUT_FORMAT_ORDER:
+            metadata.update({f"{name}_output_file": paths[name].name, f"{name}_output_checksum": hashlib.sha256(contents[name]).hexdigest(), f"{name}_output_file_size": len(contents[name])})
+        writer(metadata_path, (json.dumps(metadata, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
+    except OSError as exc:
+        for path in created: _best_effort_unlink(path)
+        raise TimeSeriesError("時系列分析出力の保存に失敗しました。既存出力は変更していません") from exc
+    return {**plan, "status": "analyzed", "output_paths": paths}
+
+
+def dry_run_lines(input_metadata: Path, output: Path, *, force: bool = False) -> list[str]:
+    plan = analyze_timeseries(input_metadata, output, force=force, dry_run=True)
+    result = plan["result"]
+    return [f"input metadata path: {input_metadata}", f"included record count: {result['included_record_count']}", f"missing date count: {result['missing_date_count']}", f"future date count: {result['future_date_count']}", f"current date cutoff: {result['current_date_cutoff']}", f"timeseries required: {'yes' if force or not plan['cache_hit'] else 'no'}"]

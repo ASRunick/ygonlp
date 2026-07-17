@@ -15,6 +15,7 @@ from .preprocess import (
     verify_preprocessed_cache,
 )
 from .summarize import SummarizeError, dry_run_lines as summarize_dry_run_lines, summarize
+from .timeseries import TimeSeriesError, analyze_timeseries, dry_run_lines as timeseries_dry_run_lines
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -39,6 +40,15 @@ def build_parser() -> argparse.ArgumentParser:
     summarize_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
     summarize_parser.add_argument("--dry-run", action="store_true", help="出力せずに入力・集計計画を検証")
     summarize_parser.add_argument("--force", action="store_true", help="有効な集計出力を無視して再生成")
+    timeseries_parser = subparsers.add_parser(
+        "analyze-timeseries",
+        help="TCG初出候補年別のLength Metricsを集計する",
+        description="TCG初出候補年別のLength Metricsを集計する",
+    )
+    timeseries_parser.add_argument("--input-metadata", type=Path, required=True, help="measurement metadata JSON")
+    timeseries_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
+    timeseries_parser.add_argument("--dry-run", action="store_true", help="出力せずに時系列分析計画を検証")
+    timeseries_parser.add_argument("--force", action="store_true", help="有効な時系列分析出力を無視して再生成")
     verify_preprocess_parser = subparsers.add_parser(
         "verify-preprocess",
         help="前処理cacheを全record単位で深く検証する",
@@ -67,6 +77,7 @@ def main(argv: list[str] | None = None) -> int:
         "cleanup-preprocess",
         "measure",
         "summarize",
+        "analyze-timeseries",
     }:
         build_parser().print_help()
         return 0
@@ -90,6 +101,12 @@ def main(argv: list[str] | None = None) -> int:
             result = cleanup_preprocess(args.output, delete=args.delete)
             for path in result["deleted"] if args.delete else result["candidates"]:
                 print(path)
+        elif args.command == "analyze-timeseries" and args.dry_run:
+            print("\n".join(timeseries_dry_run_lines(args.input_metadata, args.output, force=args.force)))
+        elif args.command == "analyze-timeseries":
+            result = analyze_timeseries(args.input_metadata, args.output, force=args.force)
+            print(f"status: {result['status']}")
+            print(f"timeseries metadata path: {result['output_metadata_path']}")
         elif args.dry_run:
             if args.command == "preprocess":
                 print("\n".join(preprocess_dry_run_lines(args.input_metadata, args.output, force=args.force)))
@@ -116,7 +133,7 @@ def main(argv: list[str] | None = None) -> int:
             for code, count in result["warnings"].items():
                 print(f"warning: {code}: {count} records", file=__import__("sys").stderr)
         return 0
-    except (RuntimeError, PreprocessError, MeasureError, SummarizeError) as exc:
+    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError) as exc:
         import sys
 
         print(f"エラー: {exc}", file=sys.stderr)
