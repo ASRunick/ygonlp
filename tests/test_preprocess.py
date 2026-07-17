@@ -16,6 +16,8 @@ from ygonlp.preprocess import (
     serialize_jsonl,
     transform_cards,
     valid_output,
+    validate_preprocessed_record,
+    verify_preprocessed_cache,
 )
 
 
@@ -285,3 +287,111 @@ def test_output_metadata_path_traversal_is_invalid(tmp_path):
     meta["output_data_file"] = "../outside.jsonl"
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
     assert not valid_output(output, result["preprocessing_cache_key"])
+
+def test_deep_verify_accepts_valid_preprocessing_cache(tmp_path):
+    metadata, _ = source_files(tmp_path, [card(2), card(1)])
+    result = preprocess(metadata, tmp_path / "out")
+
+    verified = verify_preprocessed_cache(Path(result["output_metadata_path"]))
+
+    assert verified["status"] == "valid"
+    assert verified["record_count"] == 2
+    assert verified["data_path"] == Path(result["output_data_path"])
+
+def rewrite_preprocessed_data(
+    metadata_path: Path,
+    records: list[dict],
+) -> Path:
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    data_path = metadata_path.parent / metadata["output_data_file"]
+    content = (
+        "\n".join(
+            json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+            for record in records
+        )
+        + "\n"
+    ).encode("utf-8")
+    data_path.write_bytes(content)
+    metadata["output_sha256"] = hashlib.sha256(content).hexdigest()
+    metadata["output_record_count"] = len(records)
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+    return data_path
+
+def test_deep_verify_rejects_wrong_key_order(tmp_path):
+    raw_metadata, _ = source_files(tmp_path)
+    result = preprocess(raw_metadata, tmp_path / "out")
+    metadata_path = Path(result["output_metadata_path"])
+    data_path = Path(result["output_data_path"])
+
+    record = json.loads(data_path.read_text(encoding="utf-8"))
+    reordered = {"card_id": record["card_id"], **record}
+    rewrite_preprocessed_data(metadata_path, [reordered])
+
+    with pytest.raises(PreprocessError, match="キー順"):
+        verify_preprocessed_cache(metadata_path)
+
+@pytest.mark.parametrize(
+    "card_ids",
+    [
+        [2, 1],
+        [1, 1],
+    ],
+)
+def test_deep_verify_rejects_card_id_order_or_duplicates(tmp_path, card_ids):
+    raw_metadata, _ = source_files(tmp_path, [card(1), card(2)])
+    result = preprocess(raw_metadata, tmp_path / "out")
+    metadata_path = Path(result["output_metadata_path"])
+    data_path = Path(result["output_data_path"])
+    records = [
+        json.loads(line)
+        for line in data_path.read_text(encoding="utf-8").splitlines()
+    ]
+
+    for record, card_id in zip(records, card_ids):
+        record["card_id"] = card_id
+
+    rewrite_preprocessed_data(metadata_path, records)
+
+    with pytest.raises(PreprocessError, match="順序または一意性"):
+        verify_preprocessed_cache(metadata_path)
+
+def test_deep_verify_rejects_invalid_record_field_type(tmp_path):
+    raw_metadata, _ = source_files(tmp_path)
+    result = preprocess(raw_metadata, tmp_path / "out")
+    metadata_path = Path(result["output_metadata_path"])
+    data_path = Path(result["output_data_path"])
+    record = json.loads(data_path.read_text(encoding="utf-8"))
+    record["has_text"] = 1
+
+    rewrite_preprocessed_data(metadata_path, [record])
+
+    with pytest.raises(PreprocessError, match="boolean"):
+        verify_preprocessed_cache(metadata_path)
+
+def test_deep_verify_rejects_metadata_record_count_mismatch(tmp_path):
+    raw_metadata, _ = source_files(tmp_path)
+    result = preprocess(raw_metadata, tmp_path / "out")
+    metadata_path = Path(result["output_metadata_path"])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata["output_record_count"] = 2
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(PreprocessError, match="record count"):
+        verify_preprocessed_cache(metadata_path)
+
+
+def test_deep_verify_rejects_invalid_jsonl(tmp_path):
+    raw_metadata, _ = source_files(tmp_path)
+    result = preprocess(raw_metadata, tmp_path / "out")
+    metadata_path = Path(result["output_metadata_path"])
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    data_path = metadata_path.parent / metadata["output_data_file"]
+
+    content = b"{invalid-json}\n"
+    data_path.write_bytes(content)
+    metadata["output_sha256"] = hashlib.sha256(content).hexdigest()
+    metadata["output_record_count"] = 1
+    metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    with pytest.raises(PreprocessError, match="parse"):
+        verify_preprocessed_cache(metadata_path)

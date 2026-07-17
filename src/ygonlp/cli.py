@@ -7,7 +7,12 @@ from pathlib import Path
 
 from .collect import collect, dry_run_lines as collect_dry_run_lines
 from .measure import MeasureError, dry_run_lines as measure_dry_run_lines, measure
-from .preprocess import PreprocessError, dry_run_lines as preprocess_dry_run_lines, preprocess
+from .preprocess import (
+    PreprocessError,
+    dry_run_lines as preprocess_dry_run_lines,
+    preprocess,
+    verify_preprocessed_cache,
+)
 from .summarize import SummarizeError, dry_run_lines as summarize_dry_run_lines, summarize
 
 
@@ -33,12 +38,28 @@ def build_parser() -> argparse.ArgumentParser:
     summarize_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
     summarize_parser.add_argument("--dry-run", action="store_true", help="出力せずに入力・集計計画を検証")
     summarize_parser.add_argument("--force", action="store_true", help="有効な集計出力を無視して再生成")
+    verify_preprocess_parser = subparsers.add_parser(
+        "verify-preprocess",
+        help="前処理cacheを全record単位で深く検証する",
+    )
+    verify_preprocess_parser.add_argument(
+        "--input-metadata",
+        type=Path,
+        required=True,
+        help="preprocessing metadata JSON",
+    )
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
-    if args.command not in {"collect", "preprocess", "measure", "summarize"}:
+    if args.command not in {
+        "collect",
+        "preprocess",
+        "verify-preprocess",
+        "measure",
+        "summarize",
+    }:
         build_parser().print_help()
         return 0
     try:
@@ -50,6 +71,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"attempts: {result['attempts']}")
             print(f"data file path: {result['data_path']}")
             print(f"metadata file path: {result['metadata_path']}")
+        elif args.command == "verify-preprocess":
+            result = verify_preprocessed_cache(args.input_metadata)
+            print(f"status: {result['status']}")
+            print(f"metadata path: {result['metadata_path']}")
+            print(f"data file path: {result['data_path']}")
+            print(f"record count: {result['record_count']}")
+            print(f"preprocessing cache key: {result['preprocessing_cache_key']}")
         elif args.dry_run:
             if args.command == "preprocess":
                 print("\n".join(preprocess_dry_run_lines(args.input_metadata, args.output, force=args.force)))
