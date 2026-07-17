@@ -35,7 +35,7 @@ https://db.ygoprodeck.com/api/v7/cardinfo.php
 
 初期の全件取得では、原則として単一リクエストを使用します。追加情報取得のため、初期候補として `misc=yes` を使用します。公式レート制限は1秒あたり20リクエストであり、レート制限を超過すると1時間アクセスをブロックされる可能性があります。そのため、取得結果をローカル保存し、API呼び出しを最小化します。カードごとの逐次リクエスト、並列リクエスト、非同期による大量取得、自動ページ巡回、複数エンドポイントへの一括連続アクセスは初期スコープ外です。
 
-初期マイルストーンでは、`misc=yes` で返るカード単位の `tcg_date` を「TCG初出日」の第一候補として使用します。`tcg_date` が欠損している場合は欠損として保持し、初期実装で推測しません。`ocg_date` は取得可能であれば保持してよいものの、初期分析の主対象にはしません。APIフィールドの意味と採用規則を文書化し、欠損値をゼロ、空文字、架空の日付へ変換しません。
+初期マイルストーンでは、`misc=yes` で返るカード単位の `tcg_date` を、採用したTCG set情報に基づく「TCG初出候補日」として使用します。`tcg_date` が欠損している場合は欠損として保持し、初期実装で推測しません。`ocg_date` は取得可能であれば保持してよいものの、初期分析の主対象にはしません。APIフィールドの意味と採用規則を文書化し、欠損値をゼロ、空文字、架空の日付へ変換しません。
 
 収録セット一覧とセット発売日の最小値から初出候補を導出する方式は、初期の必須処理にはしません。セット情報からの導出は、欠損補完または整合性検証の将来候補として扱います。OCG初出およびその他の地域・言語版の初出分析は、適切な追加データソースを確認するまで初期スコープ外とします。
 
@@ -130,7 +130,7 @@ ygonlp measure --input-metadata <preprocessing-metadata-json> --output <output-d
 
 ## テキスト指標の集計
 
-`summarize` は `measure` が生成したmeasurement metadataを入力境界として検証し、`collect → preprocess → measure → summarize` の最後の集計段階を実行します。JSON、long-format CSV、Markdown tableを常に同時に生成します。全測定recordのoverall集計と、`tcg_date` の先頭4桁によるTCG初出年別集計を出力します。`tcg_date=null` は補完せず、`unknown` groupとして年の後ろに配置します。
+`summarize` は `measure` が生成したmeasurement metadataを入力境界として検証し、`collect → preprocess → measure → summarize` の最後の集計段階を実行します。JSON、long-format CSV、Markdown tableを常に同時に生成します。全測定recordのoverall集計と、`tcg_date` の先頭4桁によるTCG初出候補年別集計を出力します。`tcg_date=null` は補完せず、`unknown` groupとして年の後ろに配置します。
 
 ```text
 ygonlp summarize \
@@ -140,6 +140,17 @@ ygonlp summarize \
 ```
 
 各metricは母標準偏差（NumPy `ddof=0`）とlinear percentileで集計し、浮動小数の出力は6桁に固定します。`summarize` は既存のmeasurement metadataとJSONLだけを読み、カードデータAPI通信を行いません。生成されたJSON、CSV、Markdown、metadataはGit管理対象に追加しません。詳細は[集計仕様](docs/summary-spec.md)を参照してください。
+
+## TCG初出候補年別分析
+
+`analyze-timeseries` はmeasurement metadataを入力境界として、既存の `character_count`、`word_count`、`sentence_count` をTCG初出候補年、および候補年×`card_type`で記述集計します。`tcg_date` は採用したTCG set情報に基づく初出候補日です。`tcg_date` 欠損とUTC実行日時点で未来の日付は補完せずreleased trendから除外し、件数をmetadataに記録します。JSON、CSV、Markdown、metadataを生成し、API通信は行いません。
+
+```text
+ygonlp analyze-timeseries --input-metadata <measurement-metadata-json> --output <output-directory> --dry-run
+ygonlp analyze-timeseries --input-metadata <measurement-metadata-json> --output <output-directory>
+```
+
+この分析はカードテキスト長とTCG初出候補時期の記述的な関連を示すものであり、因果関係を推論するものではありません。
 
 ## 初期リポジトリ構成
 

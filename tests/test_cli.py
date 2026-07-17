@@ -30,7 +30,7 @@ def test_root_help(capsys):
         main(["--help"])
     assert exc.value.code == 0
     output = capsys.readouterr().out
-    assert "collect" in output and "preprocess" in output and "measure" in output and "summarize" in output and "cleanup-preprocess" in output
+    assert "collect" in output and "preprocess" in output and "measure" in output and "summarize" in output and "cleanup-preprocess" in output and "analyze-timeseries" in output
 
 
 def test_collect_help(capsys):
@@ -160,6 +160,18 @@ def test_summarize_help_and_required_input_metadata(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["summarize", "--output", "out", "--dry-run"])
     assert exc.value.code != 0
+
+
+def test_analyze_timeseries_help_and_required_input_metadata(capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["analyze-timeseries", "--help"])
+    assert exc.value.code == 0
+    help_text = capsys.readouterr().out
+    assert "--input-metadata" in help_text and "TCG初出候補年" in help_text
+    with pytest.raises(SystemExit) as exc:
+        main(["analyze-timeseries", "--output", "out"])
+    assert exc.value.code != 0
+    assert "--input-metadata" in capsys.readouterr().err
 
 
 def test_summarize_dry_run_via_cli_is_read_only(tmp_path: Path, capsys):
