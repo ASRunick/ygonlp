@@ -11,7 +11,7 @@ license = { file = "LICENSE" }
 dependencies = ["httpx>=0.27", "numpy>=2.0,<3", "scikit-learn>=1.9,<2"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "matplotlib>=3.8,<4"]
 
 [project.scripts]
 ygonlp = "ygonlp.cli:main"
