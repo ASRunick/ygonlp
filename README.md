@@ -170,6 +170,17 @@ ygonlp search-similar \
 
 この語彙的類似性は、意味的な同一性、ゲームプレイ上の等価性、カード強度、デッキ推薦を意味しません。
 
+## 語彙・探索的トピック分析
+
+`analyze-vocabulary` と `analyze-topics` は前処理metadataを完全検証した正規化JSONLだけを入力とし、API通信を行いません。空またはtokenなし文書を除外します。前者は scikit-learn `CountVectorizer` によるunigram/bigramの頻度・document frequency分析、後者は固定seedの `LatentDirichletAllocation` による探索的な語彙groupingです。
+
+```text
+ygonlp analyze-vocabulary --input-metadata <preprocessing-metadata-json> --output <directory> --ngram 2 --min-df 2 --english-stopwords
+ygonlp analyze-topics --input-metadata <preprocessing-metadata-json> --output <directory> --topic-count 8 --random-seed 0 --max-iter 20
+```
+
+両コマンドはJSON、CSV、Markdown、metadataをatomicに保存し、source checksum、scikit-learn version、class名、主要parameter、ranking/orderを記録します。LDA topicはmodel index順であり、意味的・公式のラベルは付けません。これは探索的な語彙分析であり、公式mechanic、意味的真実、ゲームプレイ上の同等性を示すものではありません。
+
 ## 初期リポジトリ構成
 
 ```text
