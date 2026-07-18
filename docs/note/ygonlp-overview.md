@@ -1136,9 +1136,9 @@ YGONLPを作る上で、一番難しかったのは、単に分析手法を実�
 
 #### Archetypeテキストprofile（実装済みの今後の分析拡張）
 
-前処理recordの`archetype` metadataを用い、archetypeごとのcard数、平均character count、平均word count、平均sentence count、card type分布を集計する仕組みを実装しています。これは「archetype metadataを持つカード群の文章的特徴や種別構成を、同じ測定規則で比較できるか」という問いのためのものです。
+前処理recordの`archetype` metadataを用い、archetypeごとのprofileを生成する機能を実装しています。profileにはcard count、average character count、average word count、average sentence count、card type distributionを含めます。これは「archetype metadataを持つカード群の文章的特徴や種別構成を、同じ測定規則で比較できるか」という問いのための、実装済みの今後の分析拡張です。
 
-このリポジトリには、記事で引用できる検証済みのarchetype profile出力も保存されていません。したがって、特定archetypeについての発見はここでは報告しません。また、`archetype`が欠損したrecordはprofileから除かれ、平均値や種別分布はカードの強さ、戦略上の役割、テーマの設計意図を表すものではありません。
+今回の検証済み実行では、source records 14,472件のうち、archetype profileの対象は8,738件、`archetype` metadata欠損は5,734件で、651 archetypeのprofileを生成できました。ただし、本記事ではarchetype間の比較結果を「発見」として報告しません。`archetype` metadataが欠損したrecordはprofileから除かれ、archetypeは文章特徴を比較するためのmetadataであって、カードの強さ、戦略的役割、テーマ設計意図を表すものではありません。機能は実装済みですが、追加検証後に将来の分析結果として報告する位置付けです。
 
 #### より詳細な文章構造分析
 
