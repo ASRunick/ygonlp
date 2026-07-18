@@ -21,6 +21,7 @@ from .similarity import SimilarityError, search_similar
 from .vocabulary import VocabularyError, analyze_topics, analyze_vocabulary
 from .prices import PriceSnapshotError, snapshot_prices
 from .price_analysis import PriceAnalysisError, analyze_prices
+from .archetypes import ArchetypeError, analyze_archetypes, dry_run_lines as archetype_dry_run_lines
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -63,6 +64,11 @@ def build_parser() -> argparse.ArgumentParser:
     release_counts_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
     release_counts_parser.add_argument("--dry-run", action="store_true", help="出力せずにrelease count分析計画を検証")
     release_counts_parser.add_argument("--force", action="store_true", help="有効なrelease count分析出力を無視して再生成")
+    archetypes_parser = subparsers.add_parser("analyze-archetypes", help="archetype別カードテキストprofileを集計する")
+    archetypes_parser.add_argument("--input-metadata", type=Path, required=True, help="preprocessing metadata JSON")
+    archetypes_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
+    archetypes_parser.add_argument("--dry-run", action="store_true", help="出力せずにarchetype分析計画を検証")
+    archetypes_parser.add_argument("--force", action="store_true", help="有効なarchetype分析出力を無視して再生成")
     similar_parser = subparsers.add_parser("search-similar", help="正規化済み効果テキストを語彙的に検索する")
     similar_parser.add_argument("--input-metadata", type=Path, required=True, help="preprocessing metadata JSON")
     query_group = similar_parser.add_mutually_exclusive_group(required=True)
@@ -132,6 +138,7 @@ def main(argv: list[str] | None = None) -> int:
         "summarize",
         "analyze-timeseries",
         "analyze-releases",
+        "analyze-archetypes",
         "search-similar",
         "analyze-vocabulary",
         "analyze-topics",
@@ -172,6 +179,12 @@ def main(argv: list[str] | None = None) -> int:
             result = analyze_release_counts(args.input_metadata, args.output, force=args.force)
             print(f"status: {result['status']}")
             print(f"release counts metadata path: {result['output_metadata_path']}")
+        elif args.command == "analyze-archetypes" and args.dry_run:
+            print("\n".join(archetype_dry_run_lines(args.input_metadata, args.output, force=args.force)))
+        elif args.command == "analyze-archetypes":
+            result = analyze_archetypes(args.input_metadata, args.output, force=args.force)
+            print(f"status: {result['status']}")
+            print(f"archetype metadata path: {result['output_metadata_path']}")
         elif args.command == "search-similar":
             result = search_similar(
                 args.input_metadata, args.output, card_id=args.card_id, name=args.name, top_n=args.top_n,
@@ -230,7 +243,7 @@ def main(argv: list[str] | None = None) -> int:
             for code, count in result["warnings"].items():
                 print(f"warning: {code}: {count} records", file=__import__("sys").stderr)
         return 0
-    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, ReleaseCountsError, SimilarityError, VocabularyError, PriceSnapshotError, PriceAnalysisError) as exc:
+    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, ReleaseCountsError, ArchetypeError, SimilarityError, VocabularyError, PriceSnapshotError, PriceAnalysisError) as exc:
         import sys
 
         print(f"エラー: {exc}", file=sys.stderr)
