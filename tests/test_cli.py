@@ -186,6 +186,21 @@ def test_analyze_releases_help_and_required_input_metadata(capsys):
     assert "--input-metadata" in capsys.readouterr().err
 
 
+def test_analyze_archetypes_help_and_dry_run_is_read_only(tmp_path: Path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["analyze-archetypes", "--help"])
+    assert exc.value.code == 0
+    assert "--input-metadata" in capsys.readouterr().out
+    raw_metadata = raw_source(tmp_path)
+    preprocessed = preprocess(raw_metadata, tmp_path / "preprocessed")
+    output = tmp_path / "does-not-exist"
+    assert main(["analyze-archetypes", "--input-metadata", str(preprocessed["output_metadata_path"]),
+                 "--output", str(output), "--dry-run", "--force"]) == 0
+    text = capsys.readouterr().out
+    assert "missing archetype count:" in text and "archetype required: yes" in text
+    assert not output.exists()
+
+
 def test_search_similar_help(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["search-similar", "--help"])
