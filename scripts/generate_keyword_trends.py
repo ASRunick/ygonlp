@@ -24,6 +24,12 @@ KEYWORDS = {
     "banish": [r"\bbanish(?:ed|ing)?\b"],
     "search": [r"\b(?:add|search)\b"],
 }
+KEYWORD_COLORS = {
+    "graveyard": "#6a3d9a",
+    "gy": "#1f78b4",
+    "banish": "#e31a1c",
+    "search": "#33a02c",
+}
 FIGURE_DPI = 200
 
 
@@ -63,10 +69,10 @@ def plot_keyword_trends(result: dict[str, Any], output: Path) -> None:
     if not rows:
         raise ValueError("keyword trend analysis has no yearly rows")
     figure, axis = plt.subplots(figsize=(10, 5))
-    for keyword, color in zip(sorted({row["keyword"] for row in rows}), plt.rcParams["axes.prop_cycle"].by_key()["color"], strict=True):
+    for keyword in KEYWORDS:
         keyword_rows = [row for row in rows if row["keyword"] == keyword]
         axis.plot([int(row["year"]) for row in keyword_rows], [row["document_ratio"] for row in keyword_rows],
-                  label=keyword, color=color, linewidth=2.2, marker="o", markersize=4)
+                  label=keyword, color=KEYWORD_COLORS[keyword], linewidth=2.2, marker="o", markersize=4)
     years = sorted({int(row["year"]) for row in rows})
     axis.set_title("Mechanic keyword document ratio by TCG candidate first-appearance year")
     axis.set_xlabel("TCG candidate first-appearance year")
