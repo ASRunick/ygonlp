@@ -2,6 +2,24 @@
 
 英語版『遊戯王OCG／TCG』カードテキストを対象とした、自然言語処理および記述的データ分析のための再現可能なCLI研究プロジェクトです。
 
+## 動作確認済み環境
+
+### macOS 26 (Apple Silicon)
+
+以下の環境で動作確認しました。
+
+- OS: macOS 26
+- Hardware: Apple Silicon MacBook Air
+- Python: 3.11.9
+
+確認結果:
+
+- 仮想環境 (`venv`) によるセットアップ: OK
+- editable install (`pip install -e .`): OK
+- テスト: 309 passed
+
+macOS固有の問題は確認されませんでした。
+
 ## 研究目的
 
 最初の研究課題は、次の問いです。
