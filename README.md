@@ -208,7 +208,7 @@ ygonlp analyze-vocabulary --input-metadata <preprocessing-metadata-json> --outpu
 ygonlp analyze-topics --input-metadata <preprocessing-metadata-json> --output <directory> --topic-count 8 --random-seed 0 --max-iter 20
 ```
 
-両コマンドはJSON、CSV、Markdown、metadataをatomicに保存し、source checksum、scikit-learn version、class名、主要parameter、ranking/orderを記録します。LDA topicはmodel index順であり、意味的・公式のラベルは付けません。これは探索的な語彙分析であり、公式mechanic、意味的真実、ゲームプレイ上の同等性を示すものではありません。
+両コマンドはJSON、CSV、Markdown、metadataをatomicに保存し、source checksum、scikit-learn version、class名、主要parameter、ranking/orderを記録します。topic分析のJSONとCSVはcardごとの完全なtopic proportionを保持しますが、読みやすさのためMarkdownはtopic語、代表card、overall・card type・TCG年別のtopic prevalenceだけを掲載します。この包含方針もmetadataに記録します。LDA topicはmodel index順であり、意味的・公式のラベルは付けません。これは探索的な語彙分析であり、公式mechanic、意味的真実、ゲームプレイ上の同等性を示すものではありません。
 
 ## 価格snapshot
 

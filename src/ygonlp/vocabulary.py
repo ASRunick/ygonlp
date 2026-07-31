@@ -32,12 +32,13 @@ VOCABULARY_METADATA_SCHEMA_VERSION = 2
 VOCABULARY_JSON_SCHEMA_VERSION = 1
 VOCABULARY_CSV_SCHEMA_VERSION = 1
 VOCABULARY_MARKDOWN_SCHEMA_VERSION = 1
-TOPICS_METADATA_SCHEMA_VERSION = 2
+TOPICS_METADATA_SCHEMA_VERSION = 3
 TOPICS_JSON_SCHEMA_VERSION = 1
 TOPICS_CSV_SCHEMA_VERSION = 1
-TOPICS_MARKDOWN_SCHEMA_VERSION = 1
+TOPICS_MARKDOWN_SCHEMA_VERSION = 2
 VOCABULARY_OUTPUT_ORDERING = "vocabulary_corpus_frequency_desc_document_frequency_desc_term_asc_v1"
 TOPICS_OUTPUT_ORDERING = "topic_terms_topic_index_asc_then_representative_cards_topic_index_asc_then_documents_source_order_topic_index_asc_then_prevalence_overall_card_type_asc_tcg_year_asc_topic_index_asc_v1"
+TOPICS_MARKDOWN_INCLUSION_POLICY = "topic_terms_representative_cards_topic_prevalence_only_v1"
 
 
 class VocabularyError(RuntimeError):
@@ -183,7 +184,7 @@ def build_topics(source: Source, *, topic_count: int = 5, top_terms: int = 10, r
             "topic_prevalence": grouped["prevalence"]}
 
 
-def _rows(result: dict[str, Any], kind: str) -> tuple[tuple[str, ...], list[dict[str, Any]]]:
+def _rows(result: dict[str, Any], kind: str, *, include_document_topics: bool = True) -> tuple[tuple[str, ...], list[dict[str, Any]]]:
     if kind == "vocabulary":
         fields = ("term", "corpus_frequency", "document_frequency", "document_frequency_ratio")
         return fields, result["terms"]
@@ -193,8 +194,9 @@ def _rows(result: dict[str, Any], kind: str) -> tuple[tuple[str, ...], list[dict
         rows += [{"record_type": "topic_term", "topic_index": topic["topic_index"], "term": term["term"], "value": term["weight"]} for term in topic["top_terms"]]
     for topic in result["topics"]:
         rows += [{"record_type": "representative_card", "topic_index": topic["topic_index"], **card, "value": card["proportion"]} for card in topic["representative_cards"]]
-    for document in result["documents"]:
-        rows += [{"record_type": "document_topic", "topic_index": index, "card_id": document["card_id"], "name": document["name"], "card_type": document["card_type"], "tcg_date": document["tcg_date"], "value": value} for index, value in enumerate(document["topic_proportions"])]
+    if include_document_topics:
+        for document in result["documents"]:
+            rows += [{"record_type": "document_topic", "topic_index": index, "card_id": document["card_id"], "name": document["name"], "card_type": document["card_type"], "tcg_date": document["tcg_date"], "value": value} for index, value in enumerate(document["topic_proportions"])]
     for group in result["topic_prevalence"]:
         rows += [{"record_type": "topic_prevalence", "topic_index": index, "scope": group["scope"], "group": group["group"], "document_count": group["document_count"], "value": value} for index, value in enumerate(group["topic_prevalence"])]
     return fields, rows
@@ -213,7 +215,7 @@ def _serialize_csv(result: dict[str, Any], kind: str) -> bytes:
 
 
 def _serialize_markdown(result: dict[str, Any], kind: str) -> bytes:
-    fields, rows = _rows(result, kind); lines = ["| " + " | ".join(fields) + " |", "|" + "|".join("---" for _ in fields) + "|"]
+    fields, rows = _rows(result, kind, include_document_topics=kind != "topics"); lines = ["| " + " | ".join(fields) + " |", "|" + "|".join("---" for _ in fields) + "|"]
     for row in rows:
         values = []
         for field in fields:
@@ -252,6 +254,7 @@ def _definition(kind: str, parameters: dict[str, Any]) -> dict[str, Any]:
             "term_ranking_identifier": TOPIC_TERM_RANKING,
             "representative_card_ranking_identifier": REPRESENTATIVE_RANKING,
             "output_ordering_identifier": TOPICS_OUTPUT_ORDERING,
+            "markdown_inclusion_policy": TOPICS_MARKDOWN_INCLUSION_POLICY,
             "current_date_cutoff": parameters["current_date_cutoff"],
             "sklearn_version": sklearn.__version__,
             "vectorizer_class": "sklearn.feature_extraction.text.CountVectorizer",
