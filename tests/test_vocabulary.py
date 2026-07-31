@@ -151,3 +151,19 @@ def test_topics_cache_force_serialization_rollback_and_metadata_definition(tmp_p
     with pytest.raises(VocabularyError):
         analyze_topics(input_metadata, output, writer=fail_metadata, **{**kwargs, "top_terms": 1})
     assert first["output_metadata_path"].read_bytes() == metadata_bytes
+
+
+def test_topic_markdown_omits_document_topics_but_json_and_csv_retain_them(tmp_path):
+    input_metadata = source(tmp_path)
+    result = analyze_topics(input_metadata, tmp_path / "topics-output", topic_count=2, top_terms=2,
+                            representative_cards=2, random_seed=3, max_iter=3, today=date(2021, 1, 1))
+    contents = {name: path.read_text(encoding="utf-8") for name, path in result["output_paths"].items()}
+    metadata = json.loads(result["output_metadata_path"].read_text(encoding="utf-8"))
+
+    assert "document_topic" not in contents["markdown"]
+    assert "topic_term" in contents["markdown"]
+    assert "representative_card" in contents["markdown"]
+    assert "topic_prevalence" in contents["markdown"]
+    assert contents["json"].count('"topic_proportions"') == result["result"]["document_count"]
+    assert contents["csv"].count("document_topic") == result["result"]["document_count"] * 2
+    assert metadata["markdown_inclusion_policy"] == module.TOPICS_MARKDOWN_INCLUSION_POLICY
