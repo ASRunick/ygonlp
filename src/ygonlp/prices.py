@@ -9,6 +9,7 @@ from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, Callable
 
+from .artifacts import read_json as _read_json
 from .collect import _write_bytes_atomic
 from .preprocess import Source, _safe_child, load_source
 
@@ -130,10 +131,6 @@ def _metadata_path(output: Path, key: str) -> Path:
 
 def _data_path(output: Path, key: str, checksum: str) -> Path:
     return output / f"price-snapshot-{key[:KEY_PREFIX_LENGTH]}-{checksum[:CONTENT_PREFIX_LENGTH]}.jsonl"
-
-
-def _read_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as handle: return json.load(handle)
 
 
 def _expected(source: Source, key: str, timestamp: str, observations: list[dict[str, Any]], missing: Counter[str], zero: Counter[str]) -> dict[str, Any]:

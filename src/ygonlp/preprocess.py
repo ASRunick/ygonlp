@@ -7,12 +7,16 @@ import json
 import os
 import re
 import stat
-import tempfile
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
+
+from .artifacts import best_effort_unlink as _best_effort_unlink
+from .artifacts import read_json as _read_json
+from .artifacts import safe_child as _safe_child
+from .artifacts import write_bytes_atomic as _write_atomic
 
 PREPROCESSING_SCHEMA_VERSION = 1
 RECORD_SCHEMA_VERSION = 1
@@ -59,26 +63,6 @@ class Source:
     data_path: Path
     metadata: dict[str, Any]
     payload: dict[str, Any]
-
-
-def _read_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def _safe_child(directory: Path, name: Any) -> Path | None:
-    if not isinstance(name, str) or not name or Path(name).is_absolute():
-        return None
-    relative = Path(name)
-    if relative.name != name or ".." in relative.parts:
-        return None
-    candidate = directory / relative
-    try:
-        if candidate.resolve(strict=False).parent != directory.resolve(strict=False):
-            return None
-    except OSError:
-        return None
-    return candidate
 
 
 def load_source(metadata_path: Path) -> Source:
@@ -512,34 +496,6 @@ def verify_preprocessed_cache(metadata_path: Path) -> dict[str, Any]:
         "preprocessing_cache_key": metadata["preprocessing_cache_key"],
         "output_sha256": checksum,
     }
-
-
-def _write_atomic(path: Path, content: bytes) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(content)
-            handle.flush()
-            try:
-                os.fsync(handle.fileno())
-            except OSError:
-                pass
-        os.replace(temporary, path)
-    finally:
-        # cleanupは本来の書込み・replace失敗を覆い隠してはならない。
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-def _best_effort_unlink(path: Path) -> None:
-    """失敗した新generationの掃除は、元の保存失敗を隠さない。"""
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        pass
 
 
 def _utc_now() -> str:

@@ -15,6 +15,9 @@ from typing import Any, Callable, Mapping, Protocol
 
 import httpx
 
+from .artifacts import read_json as _read_json
+from .artifacts import safe_child as _safe_data_path
+
 SCHEMA_VERSION = "1"
 API_VERSION = "v7"
 METHOD = "GET"
@@ -68,27 +71,6 @@ def generation_data_path(output: Path, key: str, content_sha256: str) -> Path:
 
 def _json_bytes(payload: Any) -> bytes:
     return (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-
-
-def _read_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def _safe_data_path(output: Path, name: Any) -> Path | None:
-    """metadataに記録されたファイル名をoutput配下の通常ファイルに限定する。"""
-    if not isinstance(name, str) or not name or Path(name).is_absolute():
-        return None
-    relative = Path(name)
-    if relative.name != name or ".." in relative.parts:
-        return None
-    candidate = output / relative
-    try:
-        if candidate.resolve(strict=False).parent != output.resolve(strict=False):
-            return None
-    except OSError:
-        return None
-    return candidate
 
 
 def valid_cache(output: Path, key: str) -> bool:

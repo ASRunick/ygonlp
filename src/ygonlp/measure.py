@@ -4,14 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from .artifacts import best_effort_unlink as _best_effort_unlink
+from .artifacts import read_json as _read_json
+from .artifacts import safe_child as _safe_child
+from .artifacts import write_bytes_atomic as _write_atomic
 from .preprocess import (
     PREPROCESSING_METADATA_SCHEMA_VERSION,
     RECORD_SCHEMA_VERSION as PREPROCESSING_RECORD_SCHEMA_VERSION,
@@ -65,26 +67,6 @@ class Source:
     data_path: Path
     metadata: dict[str, Any]
     records: list[dict[str, Any]]
-
-
-def _read_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as handle:
-        return json.load(handle)
-
-
-def _safe_child(directory: Path, name: Any) -> Path | None:
-    if not isinstance(name, str) or not name or Path(name).is_absolute():
-        return None
-    relative = Path(name)
-    if relative.name != name or ".." in relative.parts:
-        return None
-    candidate = directory / relative
-    try:
-        if candidate.resolve(strict=False).parent != directory.resolve(strict=False):
-            return None
-    except OSError:
-        return None
-    return candidate
 
 
 def _is_int(value: Any) -> bool:
@@ -286,32 +268,6 @@ def valid_output(output: Path, key: str) -> bool:
         return True
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
         return False
-
-
-def _write_atomic(path: Path, content: bytes) -> None:
-    descriptor, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "wb") as handle:
-            handle.write(content)
-            handle.flush()
-            try:
-                os.fsync(handle.fileno())
-            except OSError:
-                pass
-        os.replace(temporary, path)
-    finally:
-        try:
-            temporary.unlink(missing_ok=True)
-        except OSError:
-            pass
-
-
-def _best_effort_unlink(path: Path) -> None:
-    try:
-        path.unlink(missing_ok=True)
-    except OSError:
-        pass
 
 
 def _utc_now() -> str:

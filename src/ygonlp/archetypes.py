@@ -10,6 +10,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from .artifacts import read_json as _read_json
 from .measure import Source, _best_effort_unlink, _safe_child, _write_atomic, character_count, load_source, sentence_count, word_count
 
 ARCHETYPE_METADATA_SCHEMA_VERSION = 1
@@ -121,10 +122,6 @@ def _expected_metadata(source: Source, key: str, result: dict[str, Any]) -> dict
             "source_preprocessing_checksum": source.metadata["output_sha256"], "source_record_count": len(source.records),
             "missing_archetype_count": result["missing_archetype_count"], "included_record_count": result["included_record_count"],
             "metric_definition": METRIC_DEFINITION, "output_ordering_identifier": OUTPUT_ORDER, "output_formats": list(OUTPUT_FORMAT_ORDER)}
-
-
-def _read_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as handle: return json.load(handle)
 
 
 def valid_output(output: Path, key: str, source: Source, result: dict[str, Any]) -> bool:

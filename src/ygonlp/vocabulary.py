@@ -15,6 +15,7 @@ import sklearn
 from sklearn.decomposition import LatentDirichletAllocation
 from sklearn.feature_extraction.text import CountVectorizer
 
+from .artifacts import read_json as _read_json
 from .measure import Source, _safe_child, _write_atomic, load_source
 
 FLOAT_PRECISION = 6
@@ -273,10 +274,6 @@ def _metadata_path(output: Path, kind: str, key: str) -> Path:
 
 def _data_path(output: Path, kind: str, key: str, checksum: str, format_name: str) -> Path:
     return output / f"{kind}-{key[:KEY_PREFIX_LENGTH]}-{checksum[:CONTENT_PREFIX_LENGTH]}.{OUTPUT_SUFFIXES[format_name]}"
-
-
-def _read_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as handle: return json.load(handle)
 
 
 def _expected(source: Source, kind: str, key: str, parameters: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:
