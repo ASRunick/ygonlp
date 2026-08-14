@@ -15,6 +15,7 @@ import sklearn
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
+from .artifacts import read_json as _read_json
 from .measure import Source, _safe_child, _write_atomic, load_source
 
 SIMILARITY_METADATA_SCHEMA_VERSION = 1
@@ -174,11 +175,6 @@ def output_metadata_path(output: Path, key: str) -> Path:
 
 def _output_path(output: Path, key: str, checksum: str, format_name: str) -> Path:
     return output / f"similarity-{key[:KEY_PREFIX_LENGTH]}-{checksum[:CONTENT_PREFIX_LENGTH]}.{OUTPUT_SUFFIXES[format_name]}"
-
-
-def _read_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as handle:
-        return json.load(handle)
 
 
 def _expected_metadata(source: Source, key: str, payload: dict[str, Any], result: dict[str, Any]) -> dict[str, Any]:

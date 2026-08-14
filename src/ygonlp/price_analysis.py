@@ -17,6 +17,7 @@ import numpy as np
 import scipy
 from scipy.stats import pearsonr, spearmanr
 
+from .artifacts import read_json as _read_json
 from .measure import _safe_child, _write_atomic
 from .prices import (OBSERVATION_FIELDS, ORDERING_IDENTIFIER as SNAPSHOT_ORDERING, PRICE_OBSERVATION_SCHEMA_VERSION,
                      PRICE_SNAPSHOT_IDENTIFIER, PRICE_SNAPSHOT_METADATA_SCHEMA_VERSION, VENDORS)
@@ -58,10 +59,6 @@ def parse_character_buckets(value: str) -> tuple[int, ...]:
     if not boundaries or any(boundary <= 0 for boundary in boundaries) or any(left >= right for left, right in zip(boundaries, boundaries[1:])):
         raise PriceAnalysisError("character_bucketsは重複なしの正の昇順整数である必要があります")
     return boundaries
-
-
-def _read_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as handle: return json.load(handle)
 
 
 def _decimal(value: Any) -> Decimal:
@@ -231,10 +228,6 @@ def _expected(price: PriceSource, measurement: Any, key: str, boundaries: tuple[
             "statistic_definition": {"identifier": STATISTIC_IDENTIFIER, "percentile_method": PERCENTILE_METHOD, "standard_deviation_ddof": STANDARD_DEVIATION_DDOF, "float_precision": FLOAT_PRECISION, "decimal_to_float_boundary": "finite_decimal_to_float64_immediately_before_numpy_scipy_calculation_v1"},
             "correlation_definition": {"pearson": "scipy.stats.pearsonr", "spearman": "scipy.stats.spearmanr", "undefined_policy": "null_not_zero_for_insufficient_or_constant_v1"},
             "output_ordering_identifier": OUTPUT_ORDERING, "correlation_ordering_identifier": CORRELATION_ORDERING, "scipy_version": scipy.__version__, "numpy_version": np.__version__, "output_formats": list(OUTPUT_FORMAT_ORDER), "coverage": result["coverage"]}
-
-
-def _read_json(path: Path) -> Any:
-    with path.open(encoding="utf-8") as handle: return json.load(handle)
 
 
 def _valid(output: Path, key: str, price: PriceSource, measurement: Any, boundaries: tuple[int, ...], include_zero: bool, result: dict[str, Any]) -> bool:
