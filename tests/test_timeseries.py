@@ -69,5 +69,37 @@ def test_timeseries_orders_and_excludes_missing_and_future_records(tmp_path):
     assert "created_at" not in saved
     assert {field: saved[field] for field in ("missing_date_count", "future_date_count", "included_record_count")} == {
         "missing_date_count": 1, "future_date_count": 1, "included_record_count": 3}
+    assert saved["trend_statistic_definitions"]["minimum_observations"] == 2
+    assert saved["partial_current_year_included"] is False
     assert serialize_json(result).endswith(b"\n") and serialize_csv(result).endswith(b"\n") and serialize_markdown(result).endswith(b"\n")
-    assert len(list(csv.DictReader(io.StringIO(serialize_csv(result).decode())))) == 15
+    assert len(list(csv.DictReader(io.StringIO(serialize_csv(result).decode())))) == 87
+
+
+def test_timeseries_trends_cover_positive_negative_flat_and_undefined_cases():
+    records = [
+        record(1, tcg_date="2020-01-01", character_count=10, word_count=30, sentence_count=5),
+        record(2, tcg_date="2021-01-01", character_count=20, word_count=20, sentence_count=5),
+        record(3, tcg_date="2022-01-01", character_count=30, word_count=10, sentence_count=5),
+        record(4, tcg_date="2020-02-01", card_type="Spell Card", character_count=10, word_count=30, sentence_count=5),
+    ]
+    result = build_timeseries(records, date(2022, 6, 30))
+
+    def trend(scope, card_type, metric):
+        return next(item for item in result["trends"] if item["scope"] == scope and item["card_type"] == card_type
+                    and item["metric"] == metric and item["annual_aggregate"] == "mean")
+
+    positive = trend("by_tcg_year", None, "character_count")
+    assert positive["observation_years"] == [2020, 2021, 2022]
+    assert positive["annual_card_counts"] == [2, 1, 1]
+    assert positive["pearson"]["coefficient"] > 0 and positive["spearman"]["coefficient"] == 1.0
+    assert positive["linear_trend"] == {"status": "defined", "reason": None, "slope": 10.0, "intercept": -20190.0}
+
+    negative = trend("by_tcg_year", None, "word_count")
+    assert negative["pearson"]["coefficient"] < 0 and negative["spearman"]["coefficient"] == -1.0
+    flat = trend("by_tcg_year", None, "sentence_count")
+    assert flat["pearson"] == {"status": "undefined", "reason": "constant_annual_aggregate", "coefficient": None}
+    assert flat["linear_trend"]["slope"] == 0.0
+    undefined = trend("by_tcg_year_card_type", "Spell Card", "character_count")
+    assert undefined["pearson"] == {"status": "undefined", "reason": "insufficient_observations", "coefficient": None}
+    assert undefined["linear_trend"] == {"status": "undefined", "reason": "insufficient_observations", "slope": None, "intercept": None}
+    assert result["partial_current_year_included"] is True
