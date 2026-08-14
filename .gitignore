@@ -10,3 +10,4 @@ build/
 
 # Note generated raster images
 docs/note/assets/*.png
+docs/note/*.pdf
