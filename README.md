@@ -98,6 +98,7 @@ ygonlp measure
 ygonlp summarize
 ygonlp analyze-timeseries
 ygonlp analyze-releases
+ygonlp analyze-release-factors
 ygonlp analyze-archetypes
 ygonlp analyze-archetype-similarity
 ygonlp search-similar
@@ -187,6 +188,22 @@ ygonlp analyze-releases --input-metadata <measurement-metadata-json> --output <o
 ```
 
 出力は年別overallと年×`card_type`別の `release_count`、`cumulative_release_count` で、最初の集計対象年からcutoff年まで0件年も含みます。cutoff年はcutoffが12月31日より前の場合だけ `is_partial_year=true` です。JSON、CSV、Markdown、metadataを同時にatomic保存し、API通信は行いません。この記述集計は因果推論や予測を行いません。詳細は[release count仕様](docs/release-counts-spec.md)を参照してください。
+
+## 製品カテゴリとrelease countの探索的照合
+
+`analyze-release-factors` は、`analyze-releases` の検証済み出力と、利用者が出典付きで用意した製品カタログCSVを年別に照合します。カードAPIから製品カテゴリを推測したり、外部サイトを取得したりしません。各製品のcandidate TCG first-appearanceカード数、カテゴリ、TCG発売日、出典を明示するため、カテゴリ別の寄与候補、カタログ未照合数、年別の増減を再現可能に確認できます。
+
+```text
+ygonlp analyze-release-factors \
+  --release-counts-metadata <release-counts-metadata-json> \
+  --product-catalog <product-catalog-csv> \
+  --output <directory> \
+  --dry-run
+```
+
+これは製品カテゴリと年別candidate countの記述的照合であり、製品形式や発売戦略がcountの変化を引き起こしたという因果結論は出しません。カタログの固定schema、出典・重複の扱い、出力と制約は[製品カテゴリ照合仕様](docs/release-factor-analysis-spec.md)を参照してください。
+
+2026-08-14 UTC cutoffで再取得したsnapshotに基づくIssue #40の探索結果と、製品・イベントへの帰属に追加証拠が必要な理由は[release count要因探索](docs/release-factor-investigation.md)に記録しています。
 
 ## Archetype別テキストprofile分析
 
