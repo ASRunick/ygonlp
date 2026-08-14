@@ -53,11 +53,24 @@ def test_build_release_factor_analysis_reconciles_years_categories_and_changes(t
         {"product_id": "three", "release_date": "2019-12-01", "product_category": "old", "candidate_card_count": 1, "source_url": "https://example.test/three", "source_note": "source"},
     ])
     assert result["catalogue_rows_outside_release_count_years"] == 1
+    assert result["catalogue_future_date_row_count"] == 0
     assert result["yearly"] == [
         {"year": "2020", "is_partial_year": False, "release_count": 2, "year_over_year_change": None, "catalogued_product_count": 2, "catalogued_candidate_card_count": 2, "uncatalogued_candidate_card_count": 0, "catalogue_coverage_ratio": 1.0, "active_product_category_count": 2},
         {"year": "2021", "is_partial_year": False, "release_count": 1, "year_over_year_change": -1, "catalogued_product_count": 0, "catalogued_candidate_card_count": 0, "uncatalogued_candidate_card_count": 1, "catalogue_coverage_ratio": 0.0, "active_product_category_count": 0},
     ]
     assert [(row["year"], row["product_category"], row["share_of_release_count"]) for row in result["by_year_product_category"]] == [("2020", "core", 0.5), ("2020", "deck", 0.5)]
+
+
+def test_catalog_rows_after_release_count_cutoff_are_excluded(tmp_path):
+    metadata = release_metadata(tmp_path)
+    release_json = json.loads((metadata.parent / json.loads(metadata.read_text())["json_output_file"]).read_text())
+    release_json["current_date_cutoff"] = "2021-06-01"
+    result = build_release_factor_analysis(release_json, [
+        {"product_id": "future", "release_date": "2021-12-01", "product_category": "core", "candidate_card_count": 1, "source_url": "https://example.test/future", "source_note": "source"},
+    ])
+    assert result["catalogue_future_date_row_count"] == 1
+    assert result["yearly"][-1]["catalogued_candidate_card_count"] == 0
+    assert result["by_year_product_category"] == []
 
 
 def test_catalog_validation_and_excess_coverage_are_rejected(tmp_path):

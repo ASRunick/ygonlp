@@ -14,9 +14,9 @@ from typing import Any, Callable
 from .artifacts import best_effort_unlink, read_json, safe_child, write_bytes_atomic
 from .summarize import OUTPUT_FORMAT_ORDER, OUTPUT_SUFFIXES, PROJECT_VERSION
 
-RELEASE_FACTORS_METADATA_SCHEMA_VERSION = 1
-RELEASE_FACTORS_JSON_SCHEMA_VERSION = 1
-RELEASE_FACTORS_IDENTIFIER = "product_catalogue_candidate_release_factor_analysis_v1"
+RELEASE_FACTORS_METADATA_SCHEMA_VERSION = 2
+RELEASE_FACTORS_JSON_SCHEMA_VERSION = 2
+RELEASE_FACTORS_IDENTIFIER = "product_catalogue_candidate_release_factor_analysis_v2"
 CATALOG_COLUMNS = ("product_id", "release_date", "product_category", "candidate_card_count", "source_url", "source_note")
 YEARLY_COLUMNS = ("year", "is_partial_year", "release_count", "year_over_year_change", "catalogued_product_count", "catalogued_candidate_card_count", "uncatalogued_candidate_card_count", "catalogue_coverage_ratio", "active_product_category_count")
 CATEGORY_COLUMNS = ("year", "product_category", "product_count", "candidate_card_count", "share_of_release_count")
@@ -93,6 +93,10 @@ def _load_release_counts(metadata_path: Path) -> tuple[dict[str, Any], dict[str,
 def build_release_factor_analysis(release_counts: dict[str, Any], catalog: list[dict[str, Any]]) -> dict[str, Any]:
     """年別candidate first-appearance countに、手動検証済み製品カタログを照合する。"""
     yearly_input: dict[str, dict[str, Any]] = {}
+    try:
+        cutoff = date.fromisoformat(release_counts["current_date_cutoff"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ReleaseFactorsError("release count JSONのcurrent_date_cutoffが不正です") from exc
     for row in release_counts["overall"]:
         if not isinstance(row, dict) or not isinstance(row.get("year"), str) or not isinstance(row.get("release_count"), int) or row["release_count"] < 0 or not isinstance(row.get("is_partial_year"), bool) or row["year"] in yearly_input:
             raise ReleaseFactorsError("release count JSONのoverall rowが不正です")
@@ -100,8 +104,11 @@ def build_release_factor_analysis(release_counts: dict[str, Any], catalog: list[
     products: dict[str, list[dict[str, Any]]] = defaultdict(list)
     category_counts: Counter[tuple[str, str]] = Counter()
     category_products: Counter[tuple[str, str]] = Counter()
-    outside_year_count = 0
+    outside_year_count = future_date_row_count = 0
     for row in catalog:
+        if date.fromisoformat(row["release_date"]) > cutoff:
+            future_date_row_count += 1
+            continue
         year = row["release_date"][:4]
         if year not in yearly_input:
             outside_year_count += 1
@@ -137,6 +144,7 @@ def build_release_factor_analysis(release_counts: dict[str, Any], catalog: list[
     return {"schema_version": RELEASE_FACTORS_JSON_SCHEMA_VERSION, "analysis_identifier": RELEASE_FACTORS_IDENTIFIER,
             "release_count_definition": release_counts.get("date_definition"), "current_date_cutoff": release_counts.get("current_date_cutoff"),
             "catalogue_row_count": len(catalog), "catalogue_rows_outside_release_count_years": outside_year_count,
+            "catalogue_future_date_row_count": future_date_row_count,
             "output_ordering_identifier": OUTPUT_ORDER, "yearly": yearly, "by_year_product_category": categories}
 
 
@@ -241,6 +249,7 @@ def analyze_release_factors(release_metadata_path: Path, product_catalog: Path, 
                     "release_counts_cache_key": release_metadata["release_counts_cache_key"], "release_counts_json_checksum": release_checksum,
                     "product_catalog_file": product_catalog.name, "product_catalog_checksum": catalog_checksum,
                     "catalogue_row_count": result["catalogue_row_count"], "catalogue_rows_outside_release_count_years": result["catalogue_rows_outside_release_count_years"],
+                    "catalogue_future_date_row_count": result["catalogue_future_date_row_count"],
                     "output_ordering_identifier": OUTPUT_ORDER, "output_formats": list(OUTPUT_FORMAT_ORDER), "project_version": PROJECT_VERSION}
         for name in OUTPUT_FORMAT_ORDER:
             metadata.update({f"{name}_output_file": paths[name].name, f"{name}_output_checksum": hashlib.sha256(contents[name]).hexdigest(), f"{name}_output_file_size": len(contents[name])})
@@ -256,6 +265,6 @@ def dry_run_lines(release_metadata_path: Path, product_catalog: Path, output: Pa
     plan = analyze_release_factors(release_metadata_path, product_catalog, output, force=force, dry_run=True)
     result = plan["result"]
     return [f"release counts metadata path: {release_metadata_path}", f"product catalog path: {product_catalog}",
-            f"catalogue row count: {result['catalogue_row_count']}", f"output directory: {output}",
+            f"catalogue row count: {result['catalogue_row_count']}", f"catalogue future date row count: {result['catalogue_future_date_row_count']}", f"output directory: {output}",
             f"release factor cache key: {plan['analysis_cache_key']}", f"valid existing output: {'yes' if plan['cache_hit'] else 'no'}",
             f"--force: {'yes' if force else 'no'}", f"release factor analysis required: {'yes' if force or not plan['cache_hit'] else 'no'}"]

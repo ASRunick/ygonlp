@@ -24,7 +24,7 @@ example-core-2020,2020-01-01,core_booster,100,https://example.invalid/product,of
 - `candidate_card_count` は、その製品に割り当てた、対象datasetの**candidate TCG first appearance**カード数である。reprint、別製品との重複、印刷数は含めない。複数製品で同じカードを数えない責任はカタログ作成者にある。
 - `source_url` は製品・発売日・内容数を確認できるHTTP(S)の出典、`source_note` は数え方または出典の補足である。
 
-同一年のカタログ合計がdatasetの`release_count`を上回る場合は、重複または定義不一致とみなして失敗する。カタログにないカードは`uncatalogued_candidate_card_count`として残す。したがって、完全照合されていないカテゴリ別値を全release数の内訳と解釈してはならない。
+同一年のカタログ合計がdatasetの`release_count`を上回る場合は、重複または定義不一致とみなして失敗する。release-count artifactのUTC cutoff後に発売されたカタログ行は集計から除外し、`catalogue_future_date_row_count`として記録する。カタログにないカードは`uncatalogued_candidate_card_count`として残す。したがって、完全照合されていないカテゴリ別値を全release数の内訳と解釈してはならない。
 
 ## 出力と読み方
 
@@ -36,7 +36,7 @@ JSON、long-format CSV、Markdown、metadataをatomicに保存する。metadata�
 - `catalogued_product_count` と `active_product_category_count`: supplied catalogueに存在する製品・カテゴリ数。
 - `catalogued_candidate_card_count`、`uncatalogued_candidate_card_count`、`catalogue_coverage_ratio`: カタログがcandidate first-appearance countをどこまで照合できたか。
 
-カテゴリ表は、年とカテゴリ別の製品数・割り当てcandidate card数・同年`release_count`に対する割合を出す。部分年は入力release-count artifactの`is_partial_year`をそのまま保持する。カタログの製品日がrelease-count artifactの年範囲外なら、カテゴリ表に混ぜず件数だけmetadata/JSONへ記録する。
+カテゴリ表は、年とカテゴリ別の製品数・割り当てcandidate card数・同年`release_count`に対する割合を出す。部分年は入力release-count artifactの`is_partial_year`をそのまま保持する。カタログの製品日がrelease-count artifactの年範囲外またはUTC cutoffより後なら、カテゴリ表に混ぜず件数だけmetadata/JSONへ記録する。
 
 ## 制約
 
