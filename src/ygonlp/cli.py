@@ -17,6 +17,7 @@ from .preprocess import (
 from .summarize import SummarizeError, dry_run_lines as summarize_dry_run_lines, summarize
 from .timeseries import TimeSeriesError, analyze_timeseries, dry_run_lines as timeseries_dry_run_lines
 from .release_counts import ReleaseCountsError, analyze_release_counts, dry_run_lines as release_counts_dry_run_lines
+from .release_factors import ReleaseFactorsError, analyze_release_factors, dry_run_lines as release_factors_dry_run_lines
 from .similarity import SimilarityError, search_similar
 from .vocabulary import VocabularyError, analyze_topics, analyze_vocabulary
 from .prices import PriceSnapshotError, snapshot_prices
@@ -65,6 +66,15 @@ def build_parser() -> argparse.ArgumentParser:
     release_counts_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
     release_counts_parser.add_argument("--dry-run", action="store_true", help="出力せずにrelease count分析計画を検証")
     release_counts_parser.add_argument("--force", action="store_true", help="有効なrelease count分析出力を無視して再生成")
+    release_factors_parser = subparsers.add_parser(
+        "analyze-release-factors",
+        help="出典付き製品カタログと年別release countを探索的に照合する",
+    )
+    release_factors_parser.add_argument("--release-counts-metadata", type=Path, required=True, help="release count metadata JSON")
+    release_factors_parser.add_argument("--product-catalog", type=Path, required=True, help="出典付き製品カタログCSV")
+    release_factors_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
+    release_factors_parser.add_argument("--dry-run", action="store_true", help="出力せずに製品カテゴリ照合計画を検証")
+    release_factors_parser.add_argument("--force", action="store_true", help="有効な製品カテゴリ照合出力を無視して再生成")
     archetypes_parser = subparsers.add_parser("analyze-archetypes", help="archetype別カードテキストprofileを集計する")
     archetypes_parser.add_argument("--input-metadata", type=Path, required=True, help="preprocessing metadata JSON")
     archetypes_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
@@ -145,6 +155,7 @@ def main(argv: list[str] | None = None) -> int:
         "summarize",
         "analyze-timeseries",
         "analyze-releases",
+        "analyze-release-factors",
         "analyze-archetypes",
         "analyze-archetype-similarity",
         "search-similar",
@@ -187,6 +198,18 @@ def main(argv: list[str] | None = None) -> int:
             result = analyze_release_counts(args.input_metadata, args.output, force=args.force)
             print(f"status: {result['status']}")
             print(f"release counts metadata path: {result['output_metadata_path']}")
+        elif args.command == "analyze-release-factors" and args.dry_run:
+            print("\n".join(release_factors_dry_run_lines(
+                args.release_counts_metadata, args.product_catalog, args.output, force=args.force,
+            )))
+        elif args.command == "analyze-release-factors":
+            result = analyze_release_factors(
+                args.release_counts_metadata, args.product_catalog, args.output, force=args.force,
+            )
+            print(f"status: {result['status']}")
+            for name, path in result["output_paths"].items():
+                print(f"{name} output file path: {path}")
+            print(f"release factor metadata path: {result['output_metadata_path']}")
         elif args.command == "analyze-archetypes" and args.dry_run:
             print("\n".join(archetype_dry_run_lines(args.input_metadata, args.output, force=args.force)))
         elif args.command == "analyze-archetypes":
@@ -259,7 +282,7 @@ def main(argv: list[str] | None = None) -> int:
             for code, count in result["warnings"].items():
                 print(f"warning: {code}: {count} records", file=__import__("sys").stderr)
         return 0
-    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, ReleaseCountsError, ArchetypeError, ArchetypeSimilarityError, SimilarityError, VocabularyError, PriceSnapshotError, PriceAnalysisError) as exc:
+    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, ReleaseCountsError, ReleaseFactorsError, ArchetypeError, ArchetypeSimilarityError, SimilarityError, VocabularyError, PriceSnapshotError, PriceAnalysisError) as exc:
         import sys
 
         print(f"エラー: {exc}", file=sys.stderr)

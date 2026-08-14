@@ -7,6 +7,7 @@ import pytest
 from ygonlp.cli import main
 from ygonlp.preprocess import preprocess
 from ygonlp.measure import measure
+from ygonlp.release_counts import analyze_release_counts
 
 
 def raw_source(tmp_path: Path) -> Path:
@@ -184,6 +185,29 @@ def test_analyze_releases_help_and_required_input_metadata(capsys):
         main(["analyze-releases", "--output", "out"])
     assert exc.value.code != 0
     assert "--input-metadata" in capsys.readouterr().err
+
+
+def test_analyze_release_factors_help_and_dry_run_is_read_only(tmp_path: Path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["analyze-release-factors", "--help"])
+    assert exc.value.code == 0
+    assert "--release-counts-metadata" in capsys.readouterr().out
+    raw_metadata = raw_source(tmp_path)
+    preprocessed = preprocess(raw_metadata, tmp_path / "preprocessed")
+    measured = measure(preprocessed["output_metadata_path"], tmp_path / "measured")
+    releases = analyze_release_counts(measured["output_metadata_path"], tmp_path / "releases")
+    catalog = tmp_path / "products.csv"
+    catalog.write_text(
+        "product_id,release_date,product_category,candidate_card_count,source_url,source_note\n"
+        "example,2020-01-01,core_booster,1,https://example.test/product,fixture\n",
+        encoding="utf-8",
+    )
+    output = tmp_path / "does-not-exist"
+    assert main(["analyze-release-factors", "--release-counts-metadata", str(releases["output_metadata_path"]),
+                 "--product-catalog", str(catalog), "--output", str(output), "--dry-run", "--force"]) == 0
+    text = capsys.readouterr().out
+    assert "catalogue row count:" in text and "release factor analysis required: yes" in text
+    assert not output.exists()
 
 
 def test_analyze_archetypes_help_and_dry_run_is_read_only(tmp_path: Path, capsys):
