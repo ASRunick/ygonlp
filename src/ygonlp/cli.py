@@ -22,6 +22,7 @@ from .vocabulary import VocabularyError, analyze_topics, analyze_vocabulary
 from .prices import PriceSnapshotError, snapshot_prices
 from .price_analysis import PriceAnalysisError, analyze_prices
 from .archetypes import ArchetypeError, analyze_archetypes, dry_run_lines as archetype_dry_run_lines
+from .archetype_similarity import ArchetypeSimilarityError, analyze_archetype_similarity, dry_run_lines as archetype_similarity_dry_run_lines
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -69,6 +70,12 @@ def build_parser() -> argparse.ArgumentParser:
     archetypes_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
     archetypes_parser.add_argument("--dry-run", action="store_true", help="出力せずにarchetype分析計画を検証")
     archetypes_parser.add_argument("--force", action="store_true", help="有効なarchetype分析出力を無視して再生成")
+    archetype_similarity_parser = subparsers.add_parser("analyze-archetype-similarity", help="archetype内の効果テキスト類似ペアを分析する")
+    archetype_similarity_parser.add_argument("--input-metadata", type=Path, required=True, help="preprocessing metadata JSON")
+    archetype_similarity_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
+    archetype_similarity_parser.add_argument("--top-n", type=int, default=10, help="archetypeごとに返す正の類似ペア数（既定: 10）")
+    archetype_similarity_parser.add_argument("--dry-run", action="store_true", help="出力せずにarchetype類似性分析計画を検証")
+    archetype_similarity_parser.add_argument("--force", action="store_true", help="有効なarchetype類似性分析出力を無視して再生成")
     similar_parser = subparsers.add_parser("search-similar", help="正規化済み効果テキストを語彙的に検索する")
     similar_parser.add_argument("--input-metadata", type=Path, required=True, help="preprocessing metadata JSON")
     query_group = similar_parser.add_mutually_exclusive_group(required=True)
@@ -139,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         "analyze-timeseries",
         "analyze-releases",
         "analyze-archetypes",
+        "analyze-archetype-similarity",
         "search-similar",
         "analyze-vocabulary",
         "analyze-topics",
@@ -185,6 +193,14 @@ def main(argv: list[str] | None = None) -> int:
             result = analyze_archetypes(args.input_metadata, args.output, force=args.force)
             print(f"status: {result['status']}")
             print(f"archetype metadata path: {result['output_metadata_path']}")
+        elif args.command == "analyze-archetype-similarity" and args.dry_run:
+            print("\n".join(archetype_similarity_dry_run_lines(args.input_metadata, args.output, top_n=args.top_n, force=args.force)))
+        elif args.command == "analyze-archetype-similarity":
+            result = analyze_archetype_similarity(args.input_metadata, args.output, top_n=args.top_n, force=args.force)
+            print(f"status: {result['status']}")
+            for name, path in result["output_paths"].items():
+                print(f"{name} output file path: {path}")
+            print(f"archetype similarity metadata path: {result['output_metadata_path']}")
         elif args.command == "search-similar":
             result = search_similar(
                 args.input_metadata, args.output, card_id=args.card_id, name=args.name, top_n=args.top_n,
@@ -243,7 +259,7 @@ def main(argv: list[str] | None = None) -> int:
             for code, count in result["warnings"].items():
                 print(f"warning: {code}: {count} records", file=__import__("sys").stderr)
         return 0
-    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, ReleaseCountsError, ArchetypeError, SimilarityError, VocabularyError, PriceSnapshotError, PriceAnalysisError) as exc:
+    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, ReleaseCountsError, ArchetypeError, ArchetypeSimilarityError, SimilarityError, VocabularyError, PriceSnapshotError, PriceAnalysisError) as exc:
         import sys
 
         print(f"エラー: {exc}", file=sys.stderr)

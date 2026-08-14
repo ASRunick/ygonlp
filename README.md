@@ -99,6 +99,7 @@ ygonlp summarize
 ygonlp analyze-timeseries
 ygonlp analyze-releases
 ygonlp analyze-archetypes
+ygonlp analyze-archetype-similarity
 ygonlp search-similar
 ygonlp analyze-vocabulary
 ygonlp analyze-topics
@@ -197,6 +198,19 @@ ygonlp analyze-archetypes --input-metadata <preprocessing-metadata-json> --outpu
 ```
 
 この分析はarchetype内のカードテキストの平均的なprofileを示すものであり、効果の意味的類似性、ゲームプレイ上の同等性、カード強度を示すものではありません。
+
+## Archetype内テキスト類似性分析
+
+`analyze-archetype-similarity` は検証済み前処理JSONLから、archetypeごとに効果テキスト対象かつ非空テキストのカードを比較します。`search-similar` と同じTF-IDF word unigram/cosine similarityで、正の生scoreの上位ペアをarchetypeごとに決定論的に出力します。archetype欠損、対象外カード、空テキスト、比較可能カードが1枚だけのarchetypeは除外件数としてmetadataへ記録します。JSON、CSV、Markdown、metadataを同時にatomic保存し、API通信は行いません。
+
+```text
+ygonlp analyze-archetype-similarity \
+  --input-metadata <preprocessing-metadata-json> \
+  --output <directory> \
+  --top-n 10
+```
+
+この語彙的類似性は、意味的な同一性、ゲームプレイ上の等価性、カード強度を示すものではありません。
 
 ## 効果テキスト類似検索
 
