@@ -16,6 +16,8 @@ from typing import Any, Callable
 import numpy as np
 import scipy
 from scipy.stats import pearsonr, spearmanr
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, r2_score
 
 from .artifacts import read_json as _read_json
 from .measure import _safe_child, _write_atomic
@@ -24,11 +26,11 @@ from .prices import (OBSERVATION_FIELDS, ORDERING_IDENTIFIER as SNAPSHOT_ORDERIN
 from .summarize import (FLOAT_PRECISION, PERCENTILE_METHOD, STANDARD_DEVIATION_DDOF, STATISTIC_IDENTIFIER,
                         load_source as load_measurement_source)
 
-PRICE_ANALYSIS_METADATA_SCHEMA_VERSION = 1
-PRICE_ANALYSIS_JSON_SCHEMA_VERSION = 1
+PRICE_ANALYSIS_METADATA_SCHEMA_VERSION = 2
+PRICE_ANALYSIS_JSON_SCHEMA_VERSION = 2
 PRICE_ANALYSIS_CSV_SCHEMA_VERSION = 1
 PRICE_ANALYSIS_MARKDOWN_SCHEMA_VERSION = 1
-PRICE_ANALYSIS_IDENTIFIER = "vendor_currency_snapshot_price_metrics_analysis_v1"
+PRICE_ANALYSIS_IDENTIFIER = "vendor_currency_snapshot_price_metrics_with_card_age_analysis_v2"
 KEY_PREFIX_LENGTH = CONTENT_PREFIX_LENGTH = 16
 OUTPUT_FORMAT_ORDER = ("json", "csv", "markdown")
 OUTPUT_SUFFIXES = {"json": "json", "csv": "csv", "markdown": "md"}
@@ -144,6 +146,37 @@ def _correlation(values: list[Decimal], metrics: list[int], method: str) -> dict
     return {"status": "defined", "reason": None, "coefficient": _rounded(float(result.statistic))}
 
 
+def _card_age_days(record: dict[str, Any], snapshot_day: str) -> int | None:
+    tcg_date = record["tcg_date"]
+    if tcg_date is None or tcg_date > snapshot_day:
+        return None
+    return (date.fromisoformat(snapshot_day) - date.fromisoformat(tcg_date)).days
+
+
+def _fit_model(prices: list[Decimal], features: list[list[int]]) -> dict[str, Any]:
+    if len(prices) < 5:
+        return {"status": "undefined", "reason": "insufficient_complete_observations", "observation_count": len(prices), "r_squared": None, "mean_absolute_error": None}
+    target, matrix = _numbers(prices), np.asarray(features, dtype=np.float64)
+    if np.linalg.matrix_rank(matrix - matrix.mean(axis=0)) < matrix.shape[1]:
+        return {"status": "undefined", "reason": "rank_deficient_features", "observation_count": len(prices), "r_squared": None, "mean_absolute_error": None}
+    predicted = LinearRegression().fit(matrix, target).predict(matrix)
+    return {"status": "defined", "reason": None, "observation_count": len(prices), "r_squared": _rounded(r2_score(target, predicted)), "mean_absolute_error": _rounded(mean_absolute_error(target, predicted))}
+
+
+def _model_comparisons(analyzed: list[tuple[dict[str, Any], dict[str, Any], Decimal]], snapshot_day: str) -> list[dict[str, Any]]:
+    by_vendor: dict[tuple[str, str], list[tuple[dict[str, Any], Decimal]]] = defaultdict(list)
+    for observation, record, value in analyzed:
+        by_vendor[(observation["vendor"], observation["currency"])].append((record, value))
+    comparisons = []
+    for (vendor, currency), values in sorted(by_vendor.items()):
+        usable = [(record, price, _card_age_days(record, snapshot_day)) for record, price in values]
+        usable = [(record, price, age) for record, price, age in usable if age is not None]
+        prices = [price for _, price, _ in usable]
+        baseline = [[record["character_count"], record["word_count"], record["sentence_count"]] for record, _, _ in usable]
+        comparisons.append({"vendor": vendor, "currency": currency, "complete_case_count": len(usable), "missing_card_age_count": len(values) - len(usable), "baseline": _fit_model(prices, baseline), "extended": _fit_model(prices, [row + [age] for row, (_, _, age) in zip(baseline, usable)])})
+    return comparisons
+
+
 def analyze_records(price_source: PriceSource, measurement_source: Any, *, boundaries: tuple[int, ...], include_zero: bool) -> dict[str, Any]:
     measures = {record["card_id"]: record for record in measurement_source.records}; price_ids = {item["card_id"] for item in price_source.observations}
     joined = [(item, measures[item["card_id"]], _decimal(item["decimal_price"])) for item in price_source.observations if item["card_id"] in measures]
@@ -170,6 +203,7 @@ def analyze_records(price_source: PriceSource, measurement_source: Any, *, bound
                 correlation_rows.append({"vendor": vendor, "currency": currency, "metric": metric, "method": method, **_correlation(values, metrics, method)})
     snapshot_zero_count = sum(_decimal(item["decimal_price"]) == 0 for item in price_source.observations)
     joined_zero_count = sum(value == 0 for _, _, value in joined)
+    snapshot_day = price_source.metadata["snapshot_timestamp"][:10]
     return {"schema_version": PRICE_ANALYSIS_JSON_SCHEMA_VERSION, "analysis_identifier": PRICE_ANALYSIS_IDENTIFIER,
             "snapshot_timestamp": price_source.metadata["snapshot_timestamp"], "include_zero": include_zero, "character_bucket_boundaries": list(boundaries),
             "coverage": {"total_snapshot_observation_count": len(price_source.observations), "joined_observation_count": len(joined),
@@ -177,7 +211,10 @@ def analyze_records(price_source: PriceSource, measurement_source: Any, *, bound
                          "snapshot_zero_observation_count": snapshot_zero_count, "joined_zero_observation_count": joined_zero_count,
                          "analyzed_observation_count": len(analyzed), "excluded_observation_count": len(price_source.observations) - len(analyzed)},
             "statistics": statistics, "correlations": correlation_rows,
-            "tcg_year_policy": {"cutoff": price_source.metadata["snapshot_timestamp"][:10], "missing_or_future_excluded_from_year_groups": True}}
+            "feature_schema": [{"name": "card_age_days", "kind": "numeric_non_text", "source": "measurement.tcg_date and price_snapshot.snapshot_timestamp", "derivation": "snapshot_date minus candidate_tcg_first_appearance_date", "missing_policy": "missing_or_future_tcg_date_excluded_from_model_complete_cases", "historical_status": "historical_as_of_snapshot_timestamp"}],
+            "model_comparisons": _model_comparisons(analyzed, snapshot_day),
+            "model_policy": {"target": "vendor_specific_price", "baseline_features": ["character_count", "word_count", "sentence_count"], "extended_features": ["character_count", "word_count", "sentence_count", "card_age_days"], "estimator": "sklearn.linear_model.LinearRegression", "evaluation": "in_sample_r_squared_and_mean_absolute_error_no_causal_interpretation", "minimum_complete_observations": 5},
+            "tcg_year_policy": {"cutoff": snapshot_day, "missing_or_future_excluded_from_year_groups": True}}
 
 
 def _rows(result: dict[str, Any]) -> list[dict[str, Any]]:

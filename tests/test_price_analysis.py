@@ -69,6 +69,24 @@ def test_include_zero_undefined_correlations_and_bucket_validation(tmp_path):
         with pytest.raises(PriceAnalysisError): parse_character_buckets(value)
 
 
+def test_extended_model_records_age_feature_and_missing_values(tmp_path):
+    texts = ["a.", "a b.", "a. b.", "a b c.", "a. b c.", "a b. c."]
+    price_cards = [card(index, text, str(index * 10), tcg_date=f"2020-01-0{index}") for index, text in enumerate(texts, 1)]
+    measurement_cards = [card(index, text, None, tcg_date=f"2020-01-0{index}") for index, text in enumerate(texts, 1)]
+    price_cards.append(card(7, "missing", "60", tcg_date=None)); measurement_cards.append(card(7, "missing", None, tcg_date=None))
+    price_raw = raw_source(tmp_path / "price", price_cards); measurement_raw = raw_source(tmp_path / "measurement", measurement_cards)
+    snapshot = snapshot_prices(price_raw, tmp_path / "snapshot")
+    preprocessed = preprocess(measurement_raw, tmp_path / "preprocessed")
+    measured = measure(preprocessed["output_metadata_path"], tmp_path / "measured")
+    result = analyze_prices(snapshot["output_metadata_path"], measured["output_metadata_path"], tmp_path / "output")["result"]
+    comparison = next(item for item in result["model_comparisons"] if item["vendor"] == "tcgplayer_price")
+    assert comparison["complete_case_count"] == 6 and comparison["missing_card_age_count"] == 1
+    assert {"status", "r_squared", "mean_absolute_error"} <= set(comparison["baseline"])
+    assert {"status", "r_squared", "mean_absolute_error"} <= set(comparison["extended"])
+    assert result["feature_schema"][0]["name"] == "card_age_days"
+    assert result["model_policy"]["extended_features"][-1] == "card_age_days"
+
+
 def test_cache_force_serialization_metadata_and_rollback(tmp_path):
     price_metadata, measurement_metadata = inputs(tmp_path); output = tmp_path / "output"
     first = analyze_prices(price_metadata, measurement_metadata, output)
