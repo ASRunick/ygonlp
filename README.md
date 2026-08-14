@@ -87,14 +87,23 @@ https://db.ygoprodeck.com/api/v7/cardinfo.php
 
 したがって、カードテキストが長いことを、そのまま複雑なカードまたは強いカードと解釈してはいけません。
 
-## CLI設計案
+## 主なCLIコマンド
 
 ```text
 ygonlp collect
 ygonlp preprocess
+ygonlp verify-preprocess
+ygonlp cleanup-preprocess
 ygonlp measure
 ygonlp summarize
-ygonlp export
+ygonlp analyze-timeseries
+ygonlp analyze-releases
+ygonlp analyze-archetypes
+ygonlp search-similar
+ygonlp analyze-vocabulary
+ygonlp analyze-topics
+ygonlp snapshot-prices
+ygonlp analyze-prices
 ```
 
 保存先はCLI引数で指定します。
@@ -103,12 +112,7 @@ ygonlp export
 ygonlp collect --output ~/data/ygonlp/raw
 ygonlp collect --output ~/data/ygonlp/raw --force
 ygonlp collect --output ~/data/ygonlp/raw --dry-run
-ygonlp export --format markdown
-ygonlp export --format csv
-ygonlp export --format json
 ```
-
-`export` は集計結果を機械可読なCSV、JSON、Markdownなどへ変換する将来拡張用のコマンドです。
 
 `collect --dry-run` はAPI通信およびファイル変更を行わず、HTTP method、正規化済みendpointとquery parameters、出力先、メタデータ保存先、キャッシュキー、利用可能なキャッシュ、通常実行時の通信有無、`--force` の適用結果、最大リクエスト予算を表示します。GET、HEAD、その他のネットワーク通信を含めて完全にオフラインで動作します。
 
@@ -180,6 +184,17 @@ ygonlp analyze-releases --input-metadata <measurement-metadata-json> --output <o
 ```
 
 出力は年別overallと年×`card_type`別の `release_count`、`cumulative_release_count` で、最初の集計対象年からcutoff年まで0件年も含みます。cutoff年はcutoffが12月31日より前の場合だけ `is_partial_year=true` です。JSON、CSV、Markdown、metadataを同時にatomic保存し、API通信は行いません。この記述集計は因果推論や予測を行いません。詳細は[release count仕様](docs/release-counts-spec.md)を参照してください。
+
+## Archetype別テキストprofile分析
+
+`analyze-archetypes` は前処理metadataを入力境界として検証済みJSONLを読み、archetypeを持つカードを対象に、カード数、正規化済みテキストの平均文字数・単語数・文数、および`card_type`分布を決定論的に集計します。archetypeが欠損したカードは推測・補完せず除外し、件数をmetadataに記録します。JSON、CSV、Markdown、metadataを同時にatomic保存し、API通信は行いません。
+
+```text
+ygonlp analyze-archetypes --input-metadata <preprocessing-metadata-json> --output <directory> --dry-run
+ygonlp analyze-archetypes --input-metadata <preprocessing-metadata-json> --output <directory>
+```
+
+この分析はarchetype内のカードテキストの平均的なprofileを示すものであり、効果の意味的類似性、ゲームプレイ上の同等性、カード強度を示すものではありません。
 
 ## 効果テキスト類似検索
 
@@ -267,7 +282,7 @@ reports/generated/
 - PNGやインタラクティブ可視化
 - 日本語の形態素解析
 - 大会環境の推定、カードの強さや勝率の予測、デッキ推薦
-- 大規模なWikiクロール、全カードへのLLMアノテーション、価格分析
+- 大規模なWikiクロール、全カードへのLLMアノテーション
 - GitHubアカウントや権限設定の変更
 
 ## ライセンス
