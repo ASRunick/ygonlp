@@ -201,6 +201,22 @@ def test_analyze_archetypes_help_and_dry_run_is_read_only(tmp_path: Path, capsys
     assert not output.exists()
 
 
+def test_analyze_archetype_similarity_help_and_dry_run_is_read_only(tmp_path: Path, capsys):
+    with pytest.raises(SystemExit) as exc:
+        main(["analyze-archetype-similarity", "--help"])
+    assert exc.value.code == 0
+    assert "--top-n" in capsys.readouterr().out
+    raw_metadata = raw_source(tmp_path)
+    preprocessed = preprocess(raw_metadata, tmp_path / "preprocessed")
+    output = tmp_path / "does-not-exist"
+    assert main(["analyze-archetype-similarity", "--input-metadata", str(preprocessed["output_metadata_path"]), "--output", str(output), "--dry-run", "--force"]) == 0
+    assert "archetype similarity required: yes" in capsys.readouterr().out
+    assert not output.exists()
+    assert main(["analyze-archetype-similarity", "--input-metadata", str(preprocessed["output_metadata_path"]), "--output", str(output)]) == 0
+    assert "status: analyzed" in capsys.readouterr().out
+    assert list(output.glob("archetype-similarity-*.metadata.json"))
+
+
 def test_search_similar_help(capsys):
     with pytest.raises(SystemExit) as exc:
         main(["search-similar", "--help"])
