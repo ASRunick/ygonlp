@@ -167,6 +167,8 @@ ygonlp summarize \
 
 `analyze-timeseries` はmeasurement metadataを入力境界として、既存の `character_count`、`word_count`、`sentence_count` をTCG初出候補年、および候補年×`card_type`で記述集計します。`tcg_date` は採用したTCG set情報に基づく初出候補日です。`tcg_date` 欠損とUTC実行日時点で未来の日付は補完せずreleased trendから除外し、件数をmetadataに記録します。JSON、CSV、Markdown、metadataを生成し、API通信は行いません。
 
+各metricの年別meanとmedianについて、年とのPearson・Spearman相関と最小二乗直線のslope/interceptを算出します。2年未満、または相関における年別集計値が定数の場合は相関を`null`として理由を記録します。年・年別カード数・UTC cutoff・cutoff年が部分年かどうかも記録します。これは記述的な関連であり、因果関係や将来予測を示すものではありません。
+
 ```text
 ygonlp analyze-timeseries --input-metadata <measurement-metadata-json> --output <output-directory> --dry-run
 ygonlp analyze-timeseries --input-metadata <measurement-metadata-json> --output <output-directory>
