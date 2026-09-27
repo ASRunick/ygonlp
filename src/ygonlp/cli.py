@@ -24,6 +24,8 @@ from .prices import PriceSnapshotError, snapshot_prices
 from .price_analysis import PriceAnalysisError, analyze_prices
 from .archetypes import ArchetypeError, analyze_archetypes, dry_run_lines as archetype_dry_run_lines
 from .archetype_similarity import ArchetypeSimilarityError, analyze_archetype_similarity, dry_run_lines as archetype_similarity_dry_run_lines
+from .semantic import SemanticError, embed_effect_text, search_semantic
+from .semantic_backend import MODEL_ID
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -96,6 +98,20 @@ def build_parser() -> argparse.ArgumentParser:
     similar_parser.add_argument("--card-type", help="完全一致する card_type で候補を絞る")
     similar_parser.add_argument("--release-status", choices=("released", "missing_date", "future_dated"), help="TCG発売状態で候補を絞る")
     similar_parser.add_argument("--force", action="store_true", help="有効な類似検索出力を無視して再生成")
+    embed_parser = subparsers.add_parser("embed-effect-text", help="効果テキストの意味検索用 embedding を生成する")
+    embed_parser.add_argument("--input-metadata", type=Path, required=True, help="preprocessing metadata JSON")
+    embed_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
+    embed_parser.add_argument("--model", choices=(MODEL_ID,), default=MODEL_ID, help="固定した embedding model")
+    embed_parser.add_argument("--force", action="store_true", help="有効な corpus cache を再生成")
+    semantic_parser = subparsers.add_parser("search-semantic", help="cached embedding から意味的に類似する効果テキストを検索する")
+    semantic_parser.add_argument("--embedding-metadata", type=Path, required=True, help="embedding corpus metadata JSON")
+    semantic_query = semantic_parser.add_mutually_exclusive_group(required=True)
+    semantic_query.add_argument("--card-id", type=int, help="検索元 card_id")
+    semantic_query.add_argument("--query", help="自然言語の効果 query")
+    semantic_parser.add_argument("--output", type=Path, required=True, help="検索結果と query embedding cache の保存先")
+    semantic_parser.add_argument("--top-n", type=int, default=10, help="返す正の件数（既定: 10）")
+    semantic_parser.add_argument("--offline", action="store_true", help="query embedding cache miss 時にモデルを呼ばず失敗")
+    semantic_parser.add_argument("--force", action="store_true", help="有効な検索結果を再生成")
     vocabulary_parser = subparsers.add_parser("analyze-vocabulary", help="正規化済み効果テキストの語彙・n-gram頻度を分析する")
     vocabulary_parser.add_argument("--input-metadata", type=Path, required=True, help="preprocessing metadata JSON")
     vocabulary_parser.add_argument("--output", type=Path, required=True, help="保存先ディレクトリ")
@@ -159,6 +175,8 @@ def main(argv: list[str] | None = None) -> int:
         "analyze-archetypes",
         "analyze-archetype-similarity",
         "search-similar",
+        "embed-effect-text",
+        "search-semantic",
         "analyze-vocabulary",
         "analyze-topics",
         "snapshot-prices",
@@ -233,6 +251,16 @@ def main(argv: list[str] | None = None) -> int:
             for name, path in result["output_paths"].items():
                 print(f"{name} output file path: {path}")
             print(f"similarity metadata path: {result['output_metadata_path']}")
+        elif args.command == "embed-effect-text":
+            result = embed_effect_text(args.input_metadata, args.output, force=args.force)
+            print(f"status: {result['status']}")
+            print(f"embedding metadata path: {result['metadata_path']}")
+        elif args.command == "search-semantic":
+            result = search_semantic(args.embedding_metadata, args.output, card_id=args.card_id,
+                                     query=args.query, top_n=args.top_n, offline=args.offline, force=args.force)
+            print(f"status: {result['status']}")
+            print(f"semantic result path: {result['data_path']}")
+            print(f"semantic metadata path: {result['metadata_path']}")
         elif args.command == "analyze-vocabulary":
             result = analyze_vocabulary(args.input_metadata, args.output, ngram=args.ngram, min_df=args.min_df,
                                         english_stopwords=args.english_stopwords, force=args.force)
@@ -282,7 +310,7 @@ def main(argv: list[str] | None = None) -> int:
             for code, count in result["warnings"].items():
                 print(f"warning: {code}: {count} records", file=__import__("sys").stderr)
         return 0
-    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, ReleaseCountsError, ReleaseFactorsError, ArchetypeError, ArchetypeSimilarityError, SimilarityError, VocabularyError, PriceSnapshotError, PriceAnalysisError) as exc:
+    except (RuntimeError, PreprocessError, MeasureError, SummarizeError, TimeSeriesError, ReleaseCountsError, ReleaseFactorsError, ArchetypeError, ArchetypeSimilarityError, SimilarityError, SemanticError, VocabularyError, PriceSnapshotError, PriceAnalysisError) as exc:
         import sys
 
         print(f"エラー: {exc}", file=sys.stderr)
