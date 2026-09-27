@@ -43,6 +43,12 @@ conda activate ygonlp
 python -m pip install -e ".[dev]"
 ```
 
+意味検索を実行する場合だけ、軽量なModel2Vec推論依存を追加します。
+
+```text
+python -m pip install -e ".[semantic]"
+```
+
 ## データソースと発売時期
 
 初期データソースには、YGOPRODeck API v7を使用します。Card Information endpointは次のとおりです。
@@ -102,6 +108,8 @@ ygonlp analyze-release-factors
 ygonlp analyze-archetypes
 ygonlp analyze-archetype-similarity
 ygonlp search-similar
+ygonlp embed-effect-text
+ygonlp search-semantic
 ygonlp analyze-vocabulary
 ygonlp analyze-topics
 ygonlp snapshot-prices
@@ -246,6 +254,23 @@ ygonlp search-similar \
 比較には scikit-learn の `TfidfVectorizer`（Unicode token pattern、word unigram、lowercase、L2 normalization、IDF/smooth IDF、有効なsublinear TFなし、`float64`）と cosine similarity を使います。正の生cosine scoreだけを降順、完全に同値なら`card_id`昇順で返し、公開出力のscoreだけを6桁へ丸めます。JSON、CSV、Markdown、metadataは同時にatomic保存され、source checksum、query、filter、`top_n`、ranking定義、scikit-learn version、vectorizer classと主要parameterをmetadataに記録します。`--force` は有効なキャッシュを無視して再生成します。
 
 この語彙的類似性は、意味的な同一性、ゲームプレイ上の等価性、カード強度、デッキ推薦を意味しません。
+
+## 意味的な効果テキスト検索
+
+`embed-effect-text` は検証済み前処理metadata/JSONLから、効果テキスト対象かつ非空の `text_normalized` を一度ずつ埋め込みます。MVPの唯一のproduction modelは [minishlab/potion-base-8M](https://huggingface.co/minishlab/potion-base-8M) です。`model2vec==0.9.0` とmodel revision `bf8b056651a2c21b8d2565580b8569da283cab23` を固定します。この英語向け静的モデルは256次元で、token平均pooling、L2正規化、最大512 tokenを使用します。初回生成時は固定revisionのmodel snapshotを取得する場合があります。カードデータAPIは使用しません。
+
+```text
+ygonlp embed-effect-text --input-metadata <preprocessing-metadata-json> --output <embedding-directory>
+ygonlp search-semantic --embedding-metadata <embedding-metadata-json> --card-id <id> --output <result-directory> --top-n 10
+ygonlp search-semantic --embedding-metadata <embedding-metadata-json> --query "special summon a monster from the GY" --output <result-directory>
+ygonlp search-semantic --embedding-metadata <embedding-metadata-json> --query "special summon a monster from the GY" --output <result-directory> --offline
+```
+
+card corpusは `effect-embeddings-<cache-key>-<content-checksum>.npy` と対応するmetadataへ保存します。検索結果は `semantic-search-...json` とmetadata、自然言語queryの埋め込みは結果ディレクトリ内の `query-embeddings/query-embedding-...npy` とmetadataへ別々に保存します。各metadataにschema version、完了状態、SHA-256、byte size、model識別子・package version・immutable revision、次元、pooling・正規化等の設定を記録します。corpus keyには前処理metadataとJSONL双方のchecksumを含めます。既存cacheはmodel生成より先に検証し、`--force` は再生成します。内容ファイルを先に書き、metadataを最後にatomic置換します。
+
+自然言語queryのexact入力は検索結果に保持し、埋め込みとquery cache keyには前後の空白除去と連続する空白の1文字化だけを適用します。caseは変更しません。`--offline` はquery cacheが有効なときだけ検索し、欠損・破損・非互換ならmodelやnetworkを呼ばずに失敗します。card ID検索は保存済み埋め込みだけを使用します。cosineの生score降順、同点時は`card_id`昇順で順位付けし、query card自身を除外します。表示scoreは6桁に丸めます。zero vectorは埋め込み対象から除外して件数を記録します。
+
+意味的類似度はretrieval signalです。rules equivalence、card strength、combo compatibility、deck suitabilityを意味しません。TF-IDFの`search-similar`とは別の表現とscoreであり、相互比較しません。
 
 ## 語彙・探索的トピック分析
 
