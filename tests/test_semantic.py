@@ -40,15 +40,16 @@ class Factory:
         return value
 
 
-def card(card_id, name, text):
-    return {"id": card_id, "name": name, "type": "Effect Monster", "frameType": "effect",
-            "race": "Warrior", "archetype": None, "desc": text,
+def card(card_id, name, text, *, card_type="Effect Monster", race="Warrior"):
+    return {"id": card_id, "name": name, "type": card_type, "frameType": "effect",
+            "race": race, "archetype": None, "desc": text,
             "misc_info": [{"has_effect": 1, "tcg_date": "2020-01-01"}]}
 
 
-def source(tmp_path):
-    records = [card(1, "Draw", "draw a card"), card(2, "Summon", "summon a monster"),
-               card(3, "Return", "return a monster"), card(4, "Empty", "")]
+def source(tmp_path, records=None):
+    if records is None:
+        records = [card(1, "Draw", "draw a card"), card(2, "Summon", "summon a monster"),
+                   card(3, "Return", "return a monster"), card(4, "Empty", "")]
     raw = json.dumps({"data": records}).encode()
     path = tmp_path / "raw.json"
     path.write_bytes(raw)
@@ -71,13 +72,14 @@ def test_corpus_schema_counts_checksum_and_pre_model_cache_hit(tmp_path):
     factory = Factory()
     input_metadata, first = corpus(tmp_path, factory)
     saved = json.loads(first["metadata_path"].read_text(encoding="utf-8"))
-    assert saved["schema_version"] == 1 and saved["completed"] is True
+    assert saved["schema_version"] == 2 and saved["completed"] is True
     assert (saved["eligible_count"], saved["embedded_count"], saved["empty_text_count"]) == (3, 3, 1)
     assert saved["model"]["model_revision"] is None
     assert saved["source_preprocessing_metadata_sha256"] == hashlib.sha256(input_metadata.read_bytes()).hexdigest()
     assert saved["source_preprocessing_data_sha256"]
     assert saved["data_sha256"] == hashlib.sha256(first["data_path"].read_bytes()).hexdigest()
     assert saved["data_size"] == first["data_path"].stat().st_size
+    assert [item["race"] for item in saved["cards"]] == ["Warrior"] * 3
     assert factory.created[0].calls == [["draw a card", "summon a monster", "return a monster"]]
     assert embed_effect_text(input_metadata, tmp_path / "embeddings", spec=SPEC,
                              embedder_factory=lambda: pytest.fail("model constructed on cache hit"))["status"] == "cache_hit"
@@ -115,7 +117,7 @@ def test_card_query_raw_ties_excludes_self_and_json_provenance(tmp_path):
                              card_id=2, top_n=3, spec=SPEC,
                              embedder_factory=lambda: pytest.fail("card query constructed model"))
     saved = json.loads(result["data_path"].read_text(encoding="utf-8"))
-    assert saved["schema_version"] == 1
+    assert saved["schema_version"] == 2
     assert saved["query"] == {"kind": "card_id", "value": 2}
     assert [row["card_id"] for row in saved["matches"]] == [3, 1]
     assert saved["matches"][0]["score"] == 1.0
@@ -123,13 +125,83 @@ def test_card_query_raw_ties_excludes_self_and_json_provenance(tmp_path):
     assert saved["model"] == SPEC.metadata()
     assert saved["source_preprocessing_metadata_sha256"]
     assert saved["result_cache_key"]
+    assert saved["filters"] == {"card_type": None, "race": None}
     meta = json.loads(result["metadata_path"].read_text(encoding="utf-8"))
     assert meta["model"] == SPEC.metadata() and meta["query_embedding_data_sha256"] is None
+    assert meta["filters"] == saved["filters"]
     assert meta["data_size"] == result["data_path"].stat().st_size
     assert search_semantic(embedded["metadata_path"], tmp_path / "results", card_id=2,
                            top_n=3, spec=SPEC)["status"] == "cache_hit"
     with pytest.raises(SemanticError, match="card_id"):
         search_semantic(embedded["metadata_path"], tmp_path / "results", card_id=4, spec=SPEC)
+
+
+def test_metadata_filters_rank_within_candidates_and_separate_result_cache(tmp_path):
+    records = [card(1, "Draw", "draw a card", race=None),
+               card(2, "Warrior Summon", "summon a monster"),
+               card(3, "Spellcaster Return", "return a monster", race="Spellcaster"),
+               card(4, "Spellcaster Spell", "summon a monster",
+                    card_type="Spell Card", race="Spellcaster")]
+    input_metadata = source(tmp_path, records)
+    factory = Factory()
+    embedded = embed_effect_text(input_metadata, tmp_path / "embeddings", spec=SPEC,
+                                 embedder_factory=factory)
+    assert embedded["metadata"]["cards"][0]["race"] is None
+    output = tmp_path / "results"
+    options = {"query": "special summon", "top_n": 1, "spec": SPEC,
+               "embedder_factory": factory}
+    unfiltered = search_semantic(embedded["metadata_path"], output, **options)
+    by_race = search_semantic(embedded["metadata_path"], output,
+                              race="Spellcaster", **options)
+    by_type = search_semantic(embedded["metadata_path"], output,
+                              card_type="Spell Card", **options)
+    combined = search_semantic(embedded["metadata_path"], output,
+                                card_type="Effect Monster", race="Spellcaster", **options)
+    assert [[match["card_id"] for match in item["result"]["matches"]]
+            for item in (unfiltered, by_race, by_type, combined)] == [[2], [3], [4], [3]]
+    assert len({item["result"]["result_cache_key"] for item in
+                (unfiltered, by_race, by_type, combined)}) == 4
+    for item, expected in ((unfiltered, {"card_type": None, "race": None}),
+                           (by_race, {"card_type": None, "race": "Spellcaster"}),
+                           (by_type, {"card_type": "Spell Card", "race": None}),
+                           (combined, {"card_type": "Effect Monster", "race": "Spellcaster"})):
+        assert item["result"]["filters"] == expected
+        assert json.loads(item["metadata_path"].read_text(encoding="utf-8"))["filters"] == expected
+    assert search_semantic(embedded["metadata_path"], output, race="Spellcaster",
+                           query="special summon", top_n=1, spec=SPEC, offline=True,
+                           embedder_factory=lambda: pytest.fail("model constructed"))["status"] == "cache_hit"
+    assert search_semantic(embedded["metadata_path"], output, card_id=3,
+                           race="Spellcaster", top_n=3, spec=SPEC)["result"]["matches"][0]["card_id"] == 4
+    assert search_semantic(embedded["metadata_path"], output, card_id=3,
+                           race="Warrior", card_type="Spell Card", spec=SPEC)["result"]["matches"] == []
+    assert len(factory.created) == 2  # corpus and one query embedding, independent of filters
+
+
+@pytest.mark.parametrize("change", [lambda card: card.pop("race"),
+                                     lambda card: card.update(race=42)])
+def test_corpus_requires_valid_race_metadata(tmp_path, change):
+    factory = Factory()
+    input_metadata, embedded = corpus(tmp_path, factory)
+    saved = json.loads(embedded["metadata_path"].read_text(encoding="utf-8"))
+    change(saved["cards"][0])
+    embedded["metadata_path"].write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(SemanticError, match="破損または非互換"):
+        search_semantic(embedded["metadata_path"], tmp_path / "results", card_id=1, spec=SPEC)
+    assert embed_effect_text(input_metadata, tmp_path / "embeddings", spec=SPEC,
+                             embedder_factory=factory)["status"] == "embedded"
+
+
+def test_reject_invalid_filter_values_and_old_corpus_schema(tmp_path):
+    _, embedded = corpus(tmp_path, Factory())
+    for filters in ({"race": ""}, {"card_type": ""}, {"race": 1}):
+        with pytest.raises(SemanticError, match="空でない文字列"):
+            search_semantic(embedded["metadata_path"], tmp_path / "results",
+                            card_id=1, spec=SPEC, **filters)
+    saved = json.loads(embedded["metadata_path"].read_text(encoding="utf-8"))
+    saved["schema_version"] = 1
+    embedded["metadata_path"].write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(SemanticError, match="schema"):
+        search_semantic(embedded["metadata_path"], tmp_path / "results", card_id=1, spec=SPEC)
 
 
 def test_natural_query_cache_reuse_exact_provenance_and_offline(tmp_path):
@@ -234,7 +306,8 @@ def test_cli_help_required_args_and_fake_end_to_end(tmp_path, monkeypatch, capsy
         with pytest.raises(SystemExit) as exc:
             cli.main([command, "--help"])
         assert exc.value.code == 0
-    assert "--offline" in capsys.readouterr().out
+    help_text = capsys.readouterr().out
+    assert all(option in help_text for option in ("--offline", "--card-type", "--race"))
     with pytest.raises(SystemExit) as exc:
         cli.main(["search-semantic", "--embedding-metadata", "missing", "--output", "out"])
     assert exc.value.code == 2
@@ -247,6 +320,12 @@ def test_cli_help_required_args_and_fake_end_to_end(tmp_path, monkeypatch, capsy
     embedded = next((tmp_path / "embeddings").glob("*.metadata.json"))
     assert cli.main(["search-semantic", "--embedding-metadata", str(embedded),
                      "--card-id", "2", "--output", str(tmp_path / "results")]) == 0
+    filtered_output = tmp_path / "filtered-results"
+    assert cli.main(["search-semantic", "--embedding-metadata", str(embedded),
+                     "--card-id", "2", "--card-type", "Effect Monster",
+                     "--race", "Spellcaster", "--output", str(filtered_output)]) == 0
+    filtered_result = next(filtered_output.glob("semantic-search-*-*.json"))
+    assert json.loads(filtered_result.read_text(encoding="utf-8"))["matches"] == []
     assert cli.main(["search-semantic", "--embedding-metadata", str(embedded),
                      "--query", "special summon", "--offline", "--output", str(tmp_path / "results")]) == 1
     assert "cache miss" in capsys.readouterr().err
