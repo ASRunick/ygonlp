@@ -263,12 +263,13 @@ ygonlp search-similar \
 ygonlp embed-effect-text --input-metadata <preprocessing-metadata-json> --output <embedding-directory>
 ygonlp search-semantic --embedding-metadata <embedding-metadata-json> --card-id <id> --output <result-directory> --top-n 10
 ygonlp search-semantic --embedding-metadata <embedding-metadata-json> --query "special summon a monster from the GY" --output <result-directory>
+ygonlp search-semantic --embedding-metadata <embedding-metadata-json> --query "special summon a monster from the GY" --race "Spellcaster" --card-type "Effect Monster" --output <result-directory> --top-n 10
 ygonlp search-semantic --embedding-metadata <embedding-metadata-json> --query "special summon a monster from the GY" --output <result-directory> --offline
 ```
 
-card corpusは `effect-embeddings-<cache-key>-<content-checksum>.npy` と対応するmetadataへ保存します。検索結果は `semantic-search-...json` とmetadata、自然言語queryの埋め込みは結果ディレクトリ内の `query-embeddings/query-embedding-...npy` とmetadataへ別々に保存します。各metadataにschema version、完了状態、SHA-256、byte size、model識別子・package version・immutable revision、次元、pooling・正規化等の設定を記録します。corpus keyには前処理metadataとJSONL双方のchecksumを含めます。既存cacheはmodel生成より先に検証し、`--force` は再生成します。内容ファイルを先に書き、metadataを最後にatomic置換します。
+card corpusは `effect-embeddings-<cache-key>-<content-checksum>.npy` と対応するmetadataへ保存し、各カードの `card_type` と `race` を保持・検証します。旧schemaのcorpusは再生成が必要です。検索結果は `semantic-search-...json` とmetadata、自然言語queryの埋め込みは結果ディレクトリ内の `query-embeddings/query-embedding-...npy` とmetadataへ別々に保存します。各metadataにschema version、完了状態、SHA-256、byte size、model識別子・package version・immutable revision、次元、pooling・正規化等の設定を記録します。corpus keyには前処理metadataとJSONL双方のchecksumを含めます。既存cacheはmodel生成より先に検証し、`--force` は再生成します。内容ファイルを先に書き、metadataを最後にatomic置換します。
 
-自然言語queryのexact入力は検索結果に保持し、埋め込みとquery cache keyには前後の空白除去と連続する空白の1文字化だけを適用します。caseは変更しません。`--offline` はquery cacheが有効なときだけ検索し、欠損・破損・非互換ならmodelやnetworkを呼ばずに失敗します。card ID検索は保存済み埋め込みだけを使用します。cosineの生score降順、同点時は`card_id`昇順で順位付けし、query card自身を除外します。表示scoreは6桁に丸めます。zero vectorは埋め込み対象から除外して件数を記録します。
+自然言語queryのexact入力は検索結果に保持し、埋め込みとquery cache keyには前後の空白除去と連続する空白の1文字化だけを適用します。caseは変更しません。`--offline` はquery cacheが有効なときだけ検索し、欠損・破損・非互換ならmodelやnetworkを呼ばずに失敗します。card ID検索は保存済み埋め込みだけを使用します。`--card-type` と `--race` は大文字小文字を含め完全一致で候補を絞り、併用時は両条件を満たすカードだけを対象にします。filterはtop-N選択前に適用し、未指定を含む条件を結果cache keyとmetadataに記録します。filter未指定時は全候補を検索します。cosineの生score降順、同点時は`card_id`昇順で順位付けし、query card自身を除外します。表示scoreは6桁に丸めます。zero vectorは埋め込み対象から除外して件数を記録します。
 
 意味的類似度はretrieval signalです。rules equivalence、card strength、combo compatibility、deck suitabilityを意味しません。TF-IDFの`search-similar`とは別の表現とscoreであり、相互比較しません。
 

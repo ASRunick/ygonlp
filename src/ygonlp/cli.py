@@ -110,6 +110,8 @@ def build_parser() -> argparse.ArgumentParser:
     semantic_query.add_argument("--query", help="自然言語の効果 query")
     semantic_parser.add_argument("--output", type=Path, required=True, help="検索結果と query embedding cache の保存先")
     semantic_parser.add_argument("--top-n", type=int, default=10, help="返す正の件数（既定: 10）")
+    semantic_parser.add_argument("--card-type", help="完全一致する card_type で候補を絞る")
+    semantic_parser.add_argument("--race", help="完全一致する race で候補を絞る")
     semantic_parser.add_argument("--offline", action="store_true", help="query embedding cache miss 時にモデルを呼ばず失敗")
     semantic_parser.add_argument("--force", action="store_true", help="有効な検索結果を再生成")
     vocabulary_parser = subparsers.add_parser("analyze-vocabulary", help="正規化済み効果テキストの語彙・n-gram頻度を分析する")
@@ -257,7 +259,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"embedding metadata path: {result['metadata_path']}")
         elif args.command == "search-semantic":
             result = search_semantic(args.embedding_metadata, args.output, card_id=args.card_id,
-                                     query=args.query, top_n=args.top_n, offline=args.offline, force=args.force)
+                                     query=args.query, top_n=args.top_n, card_type=args.card_type,
+                                     race=args.race, offline=args.offline, force=args.force)
             print(f"status: {result['status']}")
             print(f"semantic result path: {result['data_path']}")
             print(f"semantic metadata path: {result['metadata_path']}")

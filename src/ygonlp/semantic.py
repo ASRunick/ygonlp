@@ -16,9 +16,9 @@ from .measure import load_source
 from .semantic_backend import DEFAULT_SPEC, Embedder, EmbeddingSpec, Model2VecEmbedder
 
 
-CORPUS_SCHEMA_VERSION = 1
+CORPUS_SCHEMA_VERSION = 2
 QUERY_SCHEMA_VERSION = 1
-RESULT_SCHEMA_VERSION = 1
+RESULT_SCHEMA_VERSION = 2
 RANKING_IDENTIFIER = "cosine_raw_desc_card_id_asc_v1"
 SELECTION_IDENTIFIER = "is_effect_text_target_and_nonblank_text_normalized_v1"
 QUERY_NORMALIZATION = "collapse_unicode_whitespace_strip_v1"
@@ -151,6 +151,7 @@ def _valid_corpus(path: Path, payload: dict[str, Any]) -> tuple[dict[str, Any], 
         if (len(ids) != len(cards) or any(type(card_id) is not int for card_id in ids)
                 or ids != sorted(set(ids)) or any(
                     not isinstance(card.get("name"), str) or not isinstance(card.get("card_type"), str)
+                    or "race" not in card or (card["race"] is not None and not isinstance(card["race"], str))
                     or card.get("tcg_date") is not None and not isinstance(card.get("tcg_date"), str)
                     for card in cards
                 )):
@@ -186,7 +187,7 @@ def embed_effect_text(input_metadata: Path, output: Path, *, force: bool = False
     excluded_non_target = len(source.records) - empty_text - len(eligible)
     vectors = _encoded(embedder_factory(), [record["text_normalized"] for record in eligible], spec.dimension) if eligible else np.empty((0, spec.dimension), dtype=np.float32)
     keep = np.linalg.norm(vectors, axis=1) > 0
-    cards = [{field: record[field] for field in ("card_id", "name", "card_type", "tcg_date")}
+    cards = [{field: record[field] for field in ("card_id", "name", "card_type", "race", "tcg_date")}
              for record, accepted in zip(eligible, keep) if accepted]
     matrix = vectors[keep]
     content = _matrix_bytes(matrix)
@@ -256,7 +257,8 @@ def _query_embedding(query: str, output: Path, spec: EmbeddingSpec, *, offline: 
 
 
 def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | None = None,
-                    query: str | None = None, top_n: int = 10, offline: bool = False,
+                    query: str | None = None, top_n: int = 10, card_type: str | None = None,
+                    race: str | None = None, offline: bool = False,
                     force: bool = False, spec: EmbeddingSpec = DEFAULT_SPEC,
                     embedder_factory: EmbedderFactory = Model2VecEmbedder,
                     writer: Writer = write_bytes_atomic) -> dict[str, Any]:
@@ -264,6 +266,10 @@ def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | No
         raise SemanticError("card_id または query のどちらか一方を指定してください")
     if type(top_n) is not int or top_n <= 0:
         raise SemanticError("top_n は正の整数である必要があります")
+    for name, value in (("card_type", card_type), ("race", race)):
+        if value is not None and (not isinstance(value, str) or not value):
+            raise SemanticError(f"{name} は空でない文字列である必要があります")
+    filters = {"card_type": card_type, "race": race}
     metadata, matrix = _load_corpus(embedding_metadata, spec)
     cards = metadata["cards"]
     if card_id is not None:
@@ -290,14 +296,17 @@ def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | No
         denominators = np.linalg.norm(matrix.astype(np.float64), axis=1) * np.linalg.norm(query_vector.astype(np.float64))
         scores = matrix.astype(np.float64) @ query_vector.astype(np.float64) / denominators
         ranked = sorted(((float(score), card) for score, card in zip(scores, cards)
-                         if card_id is None or card["card_id"] != card_id),
+                         if (card_id is None or card["card_id"] != card_id)
+                         and (card_type is None or card["card_type"] == card_type)
+                         and (race is None or card["race"] == race)),
                         key=lambda pair: (-pair[0], pair[1]["card_id"]))[:top_n]
     matches = [{**card, "score": round(score, 6)} for score, card in ranked]
     result_payload = {"schema_version": RESULT_SCHEMA_VERSION,
                       "corpus_cache_key": metadata["corpus_cache_key"],
                       "corpus_data_sha256": metadata["data_sha256"],
                       "query": query_info, "query_embedding_cache_key": query_key,
-                      "top_n": top_n, "ranking_identifier": RANKING_IDENTIFIER}
+                      "top_n": top_n, "filters": filters,
+                      "ranking_identifier": RANKING_IDENTIFIER}
     key = _key(result_payload)
     result = {"schema_version": RESULT_SCHEMA_VERSION,
               "result_cache_key": key, "corpus_cache_key": metadata["corpus_cache_key"],
@@ -306,7 +315,8 @@ def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | No
               "model": spec.metadata(), "query": query_info,
               "query_embedding_cache_key": query_key,
               "query_embedding_data_sha256": query_metadata["data_sha256"] if query_metadata else None,
-              "top_n": top_n, "ranking_identifier": RANKING_IDENTIFIER, "matches": matches}
+              "top_n": top_n, "filters": filters,
+              "ranking_identifier": RANKING_IDENTIFIER, "matches": matches}
     metadata_path = output / f"semantic-search-{key[:16]}.metadata.json"
     try:
         prior, prior_raw = _read_artifact(metadata_path, "semantic-search", "result_cache_key", RESULT_SCHEMA_VERSION, result_payload)
