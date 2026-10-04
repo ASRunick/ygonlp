@@ -67,6 +67,16 @@ def _matrix(raw: bytes, rows: int, dimension: int) -> np.ndarray:
     return value
 
 
+def _construct_embedder(factory: EmbedderFactory) -> Embedder:
+    try:
+        return factory()
+    except RuntimeError:
+        # Keep the backend's actionable dependency/version diagnostics.
+        raise
+    except Exception as exc:
+        raise SemanticError("embedding model の初期化に失敗しました。model の取得環境・ローカルsnapshotを確認してください") from exc
+
+
 def _encoded(embedder: Embedder, texts: list[str], dimension: int) -> np.ndarray:
     try:
         value = np.asarray(embedder.encode(texts), dtype=np.float32)
@@ -193,7 +203,7 @@ def embed_effect_text(input_metadata: Path, output: Path, *, force: bool = False
             return {"status": "cache_hit", "metadata_path": metadata_path,
                     "data_path": output / metadata["data_file"], "metadata": metadata}
 
-    vectors = _encoded(embedder_factory(), [record["text_normalized"] for record in eligible], spec.dimension) if eligible else np.empty((0, spec.dimension), dtype=np.float32)
+    vectors = _encoded(_construct_embedder(embedder_factory), [record["text_normalized"] for record in eligible], spec.dimension) if eligible else np.empty((0, spec.dimension), dtype=np.float32)
     keep = np.linalg.norm(vectors, axis=1) > 0
     cards = [{field: record[field] for field in CARD_FIELDS}
              for record, accepted in zip(eligible, keep) if accepted]
@@ -253,7 +263,7 @@ def _query_embedding(query: str, output: Path, spec: EmbeddingSpec, *, offline: 
         return vector, metadata, metadata_path
     if offline:
         raise SemanticError("offline query embedding cache miss: 互換性のある query embedding がありません")
-    vector = _encoded(embedder_factory(), [normalized], spec.dimension)[0]
+    vector = _encoded(_construct_embedder(embedder_factory), [normalized], spec.dimension)[0]
     if not np.linalg.norm(vector):
         raise SemanticError("query の embedding が空です")
     content = _matrix_bytes(vector.reshape(1, -1))

@@ -522,3 +522,67 @@ def test_result_cache_repairs_provenance_without_query_model(tmp_path, mode, fie
     assert json.loads(repaired["metadata_path"].read_bytes()) == original_metadata
     assert search_semantic(embedded["metadata_path"], output, **options)["status"] == "cache_hit"
     assert search_semantic(embedded["metadata_path"], output, force=True, **options)["status"] == "searched"
+
+
+@pytest.mark.parametrize("stage", ["corpus", "query"])
+@pytest.mark.parametrize("error_type", [OSError, ValueError])
+def test_model_initialization_failure_is_controlled_and_preserves_artifacts(tmp_path, monkeypatch, capsys, stage, error_type):
+    input_metadata, embedded = corpus(tmp_path, Factory())
+    output = tmp_path / "results"
+    first = search_semantic(embedded["metadata_path"], output, query="special summon", spec=SPEC,
+                            embedder_factory=Factory())
+    protected = tmp_path / "embeddings" if stage == "corpus" else output
+    before = {path.relative_to(protected): path.read_bytes() for path in protected.rglob("*") if path.is_file()}
+    cause = error_type("fixture-only backend detail")
+
+    def unavailable():
+        raise cause
+
+    if stage == "corpus":
+        def invoke(**kwargs):
+            return embed_effect_text(input_metadata, tmp_path / "embeddings", spec=SPEC,
+                                      embedder_factory=unavailable, **kwargs)
+        monkeypatch.setattr(cli, "embed_effect_text", lambda *a, **kw: embed_effect_text(*a, spec=SPEC,
+                            embedder_factory=unavailable, **kw))
+        args = ["embed-effect-text", "--input-metadata", str(input_metadata), "--output", str(tmp_path / "embeddings"), "--force"]
+    else:
+        def invoke(**kwargs):
+            return search_semantic(embedded["metadata_path"], output, query="special summon", spec=SPEC,
+                                    embedder_factory=unavailable, **kwargs)
+        monkeypatch.setattr(cli, "search_semantic", lambda *a, **kw: search_semantic(*a, spec=SPEC,
+                            embedder_factory=unavailable, **kw))
+        args = ["search-semantic", "--embedding-metadata", str(embedded["metadata_path"]), "--query", "special summon",
+                "--output", str(output), "--force"]
+    with pytest.raises(SemanticError, match="初期化") as exc:
+        invoke(force=True)
+    assert exc.value.__cause__ is cause
+    assert cli.main(args) == 1
+    stderr = capsys.readouterr().err
+    assert "初期化" in stderr and "fixture-only backend detail" not in stderr and "Traceback" not in stderr
+    after = {path.relative_to(protected): path.read_bytes() for path in protected.rglob("*") if path.is_file()}
+    assert after == before
+    assert first["data_path"].exists()
+    fresh = tmp_path / "new-output"
+    args[args.index("--output") + 1] = str(fresh)
+    assert cli.main(args) == 1
+    assert not fresh.exists()
+    assert "初期化" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("stage", ["corpus", "query"])
+def test_model_initialization_preserves_actionable_runtime_error(tmp_path, stage):
+    input_metadata, embedded = corpus(tmp_path, Factory())
+    cause = RuntimeError("install optional semantic dependencies")
+
+    def unavailable():
+        raise cause
+
+    output = tmp_path / "new-output"
+    with pytest.raises(RuntimeError) as exc:
+        if stage == "corpus":
+            embed_effect_text(input_metadata, output, spec=SPEC, embedder_factory=unavailable)
+        else:
+            search_semantic(embedded["metadata_path"], output, query="uncached", spec=SPEC,
+                            embedder_factory=unavailable)
+    assert exc.value is cause
+    assert not output.exists()
