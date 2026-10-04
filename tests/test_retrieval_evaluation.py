@@ -121,7 +121,7 @@ def test_verified_caches_align_source_and_never_load_model(tmp_path):
     saved = json.loads(embedded["metadata_path"].read_text(encoding="utf-8"))
     saved["cards"][0]["card_type"] = "Spell Card"
     embedded["metadata_path"].write_text(json.dumps(saved), encoding="utf-8")
-    with pytest.raises(SemanticError, match="row"):
+    with pytest.raises(SemanticError, match="manifest"):
         load_cached_corpus(original, embedded["metadata_path"], SPEC)
 
 

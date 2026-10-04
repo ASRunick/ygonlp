@@ -72,7 +72,7 @@ def test_corpus_schema_counts_checksum_and_pre_model_cache_hit(tmp_path):
     factory = Factory()
     input_metadata, first = corpus(tmp_path, factory)
     saved = json.loads(first["metadata_path"].read_text(encoding="utf-8"))
-    assert saved["schema_version"] == 2 and saved["completed"] is True
+    assert saved["schema_version"] == 3 and saved["completed"] is True
     assert (saved["eligible_count"], saved["embedded_count"], saved["empty_text_count"]) == (3, 3, 1)
     assert saved["model"]["model_revision"] is None
     assert saved["source_preprocessing_metadata_sha256"] == hashlib.sha256(input_metadata.read_bytes()).hexdigest()
@@ -117,7 +117,7 @@ def test_card_query_raw_ties_excludes_self_and_json_provenance(tmp_path):
                              card_id=2, top_n=3, spec=SPEC,
                              embedder_factory=lambda: pytest.fail("card query constructed model"))
     saved = json.loads(result["data_path"].read_text(encoding="utf-8"))
-    assert saved["schema_version"] == 2
+    assert saved["schema_version"] == 3
     assert saved["query"] == {"kind": "card_id", "value": 2}
     assert [row["card_id"] for row in saved["matches"]] == [3, 1]
     assert saved["matches"][0]["score"] == 1.0
@@ -191,14 +191,71 @@ def test_corpus_requires_valid_race_metadata(tmp_path, change):
                              embedder_factory=factory)["status"] == "embedded"
 
 
-def test_reject_invalid_filter_values_and_old_corpus_schema(tmp_path):
+@pytest.mark.parametrize("change", [
+    lambda cards: cards[0].update(card_id=-1),
+    lambda cards: cards[0].update(name="Different name"),
+    lambda cards: cards[0].update(card_type="Spell Card"),
+    lambda cards: cards[0].update(race="Spellcaster"),
+    lambda cards: cards[0].update(tcg_date="2021-01-01"),
+    lambda cards: cards[0].pop("tcg_date"),
+    lambda cards: cards.reverse(),
+])
+def test_card_manifest_corruption_is_rejected_before_model_and_rebuilt(tmp_path, change):
+    factory = Factory()
+    input_metadata, embedded = corpus(tmp_path, factory)
+    saved = json.loads(embedded["metadata_path"].read_text(encoding="utf-8"))
+    change(saved["cards"])
+    embedded["metadata_path"].write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(SemanticError, match="破損または非互換"):
+        search_semantic(embedded["metadata_path"], tmp_path / "results", query="special summon",
+                        spec=SPEC, embedder_factory=lambda: pytest.fail("corrupted corpus reached model"))
+    repaired = embed_effect_text(input_metadata, tmp_path / "embeddings", spec=SPEC, embedder_factory=factory)
+    assert repaired["status"] == "embedded"
+    assert repaired["metadata"]["cards"][0]["race"] == "Warrior"
+    assert len(factory.created) == 2
+
+
+def test_manifest_identity_is_recorded_and_binds_result_cache(tmp_path):
+    from ygonlp.semantic import _key
+    _, embedded = corpus(tmp_path, Factory())
+    manifest = embedded["metadata"]["cards_sha256"]
+    assert manifest == _key({"cards": embedded["metadata"]["cards"]})
+    output = tmp_path / "results"
+    first = search_semantic(embedded["metadata_path"], output, card_id=2, spec=SPEC)
+    assert first["result"]["corpus_cards_sha256"] == manifest
+    assert json.loads(first["metadata_path"].read_text(encoding="utf-8"))["corpus_cards_sha256"] == manifest
+    # A completely rewritten manifest/checksum is not authenticated by a digest.
+    # Even in that case, its different row identity must use a different result key.
+    saved = json.loads(embedded["metadata_path"].read_text(encoding="utf-8"))
+    saved["cards"][0]["name"] = "Rewritten"
+    saved["cards_sha256"] = _key({"cards": saved["cards"]})
+    embedded["metadata_path"].write_text(json.dumps(saved), encoding="utf-8")
+    second = search_semantic(embedded["metadata_path"], output, card_id=2, spec=SPEC)
+    assert first["result"]["result_cache_key"] != second["result"]["result_cache_key"]
+
+
+def test_embedding_cache_compares_manifest_to_available_verified_source(tmp_path):
+    from ygonlp.semantic import _key
+    factory = Factory()
+    input_metadata, embedded = corpus(tmp_path, factory)
+    saved = json.loads(embedded["metadata_path"].read_text(encoding="utf-8"))
+    saved["cards"][0]["race"] = "Spellcaster"
+    saved["cards_sha256"] = _key({"cards": saved["cards"]})
+    embedded["metadata_path"].write_text(json.dumps(saved), encoding="utf-8")
+    result = embed_effect_text(input_metadata, tmp_path / "embeddings", spec=SPEC, embedder_factory=factory)
+    assert result["status"] == "embedded"
+    assert result["metadata"]["cards"][0]["race"] == "Warrior"
+
+
+@pytest.mark.parametrize("schema", [1, 2])
+def test_reject_invalid_filter_values_and_old_corpus_schema(tmp_path, schema):
     _, embedded = corpus(tmp_path, Factory())
     for filters in ({"race": ""}, {"card_type": ""}, {"race": 1}):
         with pytest.raises(SemanticError, match="空でない文字列"):
             search_semantic(embedded["metadata_path"], tmp_path / "results",
                             card_id=1, spec=SPEC, **filters)
     saved = json.loads(embedded["metadata_path"].read_text(encoding="utf-8"))
-    saved["schema_version"] = 1
+    saved["schema_version"] = schema
     embedded["metadata_path"].write_text(json.dumps(saved), encoding="utf-8")
     with pytest.raises(SemanticError, match="schema"):
         search_semantic(embedded["metadata_path"], tmp_path / "results", card_id=1, spec=SPEC)

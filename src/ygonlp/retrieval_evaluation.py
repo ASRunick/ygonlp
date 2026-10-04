@@ -147,8 +147,8 @@ def load_cached_corpus(preprocessing_metadata: Path, embedding_metadata: Path,
     source = load_source(preprocessing_metadata)
     header = read_json(embedding_metadata)
     schema = header.get("schema_version") if isinstance(header, dict) else None
-    if type(schema) is not int or schema not in (1, 2):
-        raise SemanticError("research corpus schema must be 1 or 2")
+    if type(schema) is not int or schema not in (1, 2, 3):
+        raise SemanticError("research corpus schema must be 1, 2 or 3")
     payload = {"schema_version": schema,
                "source_preprocessing_metadata_sha256": _digest(preprocessing_metadata.read_bytes()),
                "source_preprocessing_data_sha256": source.metadata["output_sha256"],
@@ -160,9 +160,11 @@ def load_cached_corpus(preprocessing_metadata: Path, embedding_metadata: Path,
     saved = metadata.get("cards")
     if not isinstance(saved, list) or metadata.get("embedded_count") != len(saved):
         raise SemanticError("research corpus cards/count mismatch")
+    if schema == 3 and metadata.get("cards_sha256") != _key({"cards": saved}):
+        raise SemanticError("research corpus card manifest checksum mismatch")
     by_id = {card["card_id"]: card for card in source.records}
     cards = []
-    fields = ("card_id", "name", "card_type", "tcg_date") + (("race",) if schema == 2 else ())
+    fields = ("card_id", "name", "card_type", "tcg_date") + (("race",) if schema >= 2 else ())
     for card in saved:
         original = by_id.get(card.get("card_id")) if isinstance(card, dict) else None
         if (original is None or any(field not in card or card[field] != original[field] for field in fields)

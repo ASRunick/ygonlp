@@ -16,12 +16,13 @@ from .measure import load_source
 from .semantic_backend import DEFAULT_SPEC, Embedder, EmbeddingSpec, Model2VecEmbedder
 
 
-CORPUS_SCHEMA_VERSION = 2
+CORPUS_SCHEMA_VERSION = 3
 QUERY_SCHEMA_VERSION = 1
-RESULT_SCHEMA_VERSION = 2
+RESULT_SCHEMA_VERSION = 3
 RANKING_IDENTIFIER = "cosine_raw_desc_card_id_asc_v1"
 SELECTION_IDENTIFIER = "is_effect_text_target_and_nonblank_text_normalized_v1"
 QUERY_NORMALIZATION = "collapse_unicode_whitespace_strip_v1"
+CARD_FIELDS = ("card_id", "name", "card_type", "race", "tcg_date")
 Writer = Callable[[Path, bytes], None]
 EmbedderFactory = Callable[[], Embedder]
 
@@ -150,11 +151,12 @@ def _valid_corpus(path: Path, payload: dict[str, Any]) -> tuple[dict[str, Any], 
         ids = [card.get("card_id") for card in cards if isinstance(card, dict)]
         if (len(ids) != len(cards) or any(type(card_id) is not int for card_id in ids)
                 or ids != sorted(set(ids)) or any(
-                    not isinstance(card.get("name"), str) or not isinstance(card.get("card_type"), str)
-                    or "race" not in card or (card["race"] is not None and not isinstance(card["race"], str))
+                    set(card) != set(CARD_FIELDS)
+                    or not isinstance(card.get("name"), str) or not isinstance(card.get("card_type"), str)
+                    or (card["race"] is not None and not isinstance(card["race"], str))
                     or card.get("tcg_date") is not None and not isinstance(card.get("tcg_date"), str)
                     for card in cards
-                )):
+                ) or metadata.get("cards_sha256") != _key({"cards": cards})):
             return None
         return metadata, _matrix(raw, len(cards), payload["model"]["dimension"])
     except SemanticError:
@@ -174,20 +176,25 @@ def embed_effect_text(input_metadata: Path, output: Path, *, force: bool = False
     payload = _corpus_key_payload(source, metadata_sha, spec)
     key = _key(payload)
     metadata_path = output / f"effect-embeddings-{key[:16]}.metadata.json"
-    hit = _valid_corpus(metadata_path, payload)
-    if hit is not None and not force:
-        metadata, _ = hit
-        return {"status": "cache_hit", "metadata_path": metadata_path,
-                "data_path": output / metadata["data_file"], "metadata": metadata}
-
     eligible = [record for record in source.records if record["is_effect_text_target"]
                 and isinstance(record["text_normalized"], str) and record["text_normalized"].strip()]
     empty_text = sum(not isinstance(record["text_normalized"], str)
                      or not record["text_normalized"].strip() for record in source.records)
     excluded_non_target = len(source.records) - empty_text - len(eligible)
+    hit = _valid_corpus(metadata_path, payload)
+    if hit is not None and not force:
+        metadata, _ = hit
+        source_cards = {record["card_id"]: {field: record[field] for field in CARD_FIELDS} for record in eligible}
+        if (metadata["source_record_count"] == len(source.records)
+                and metadata["eligible_count"] == len(eligible) and metadata["empty_text_count"] == empty_text
+                and metadata["excluded_non_target_count"] == excluded_non_target
+                and all(source_cards.get(card["card_id"]) == card for card in metadata["cards"])):
+            return {"status": "cache_hit", "metadata_path": metadata_path,
+                    "data_path": output / metadata["data_file"], "metadata": metadata}
+
     vectors = _encoded(embedder_factory(), [record["text_normalized"] for record in eligible], spec.dimension) if eligible else np.empty((0, spec.dimension), dtype=np.float32)
     keep = np.linalg.norm(vectors, axis=1) > 0
-    cards = [{field: record[field] for field in ("card_id", "name", "card_type", "race", "tcg_date")}
+    cards = [{field: record[field] for field in CARD_FIELDS}
              for record, accepted in zip(eligible, keep) if accepted]
     matrix = vectors[keep]
     content = _matrix_bytes(matrix)
@@ -199,7 +206,8 @@ def embed_effect_text(input_metadata: Path, output: Path, *, force: bool = False
         "source_record_count": len(source.records), "eligible_count": len(eligible),
         "embedded_count": len(cards), "excluded_non_target_count": excluded_non_target,
         "empty_text_count": empty_text, "zero_vector_count": int(len(eligible) - len(cards)),
-        "cards": cards, "data_format": "npy", "data_file": data_path.name,
+        "cards": cards, "cards_sha256": _key({"cards": cards}),
+        "data_format": "npy", "data_file": data_path.name,
         "data_sha256": _digest(content), "data_size": len(content),
     }
     _publish(data_path, metadata_path, content, metadata, writer)
@@ -304,12 +312,14 @@ def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | No
     result_payload = {"schema_version": RESULT_SCHEMA_VERSION,
                       "corpus_cache_key": metadata["corpus_cache_key"],
                       "corpus_data_sha256": metadata["data_sha256"],
+                      "corpus_cards_sha256": metadata["cards_sha256"],
                       "query": query_info, "query_embedding_cache_key": query_key,
                       "top_n": top_n, "filters": filters,
                       "ranking_identifier": RANKING_IDENTIFIER}
     key = _key(result_payload)
     result = {"schema_version": RESULT_SCHEMA_VERSION,
               "result_cache_key": key, "corpus_cache_key": metadata["corpus_cache_key"],
+              "corpus_cards_sha256": metadata["cards_sha256"],
               "source_preprocessing_metadata_sha256": metadata["source_preprocessing_metadata_sha256"],
               "source_preprocessing_data_sha256": metadata["source_preprocessing_data_sha256"],
               "model": spec.metadata(), "query": query_info,

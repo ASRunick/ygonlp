@@ -38,7 +38,13 @@ Input identities:
 | Preprocessing metadata | `7ab6ca60793e38cf44f4747980493c1fbea2ecc5634b52d23c6cd845c0dd7c27` |
 | Preprocessing JSONL | `edcb90240444c47753ed10e5bc6ed451dacef8fbe167e584811403f4dd9810b9` |
 | Corpus NPY | `96a8d445ed1adcb03e5ab700af70fd76ca3b7741d9b9b6425f4f807acaa974cd` |
-| Fixed case JSON | `8ce021a4c302122f5fff91c7416b5b9a4bb2fe6a5cad85ce1bf390616889108d` |
+| Fixed case JSON (Git LF blob) | `8ce021a4c302122f5fff91c7416b5b9a4bb2fe6a5cad85ce1bf390616889108d` |
+
+The report records the checksum of the **actual file bytes**. A Windows checkout
+with Git CRLF conversion has case-file checksum
+`3058ca1e61c313d1ffbd4f3272abbb7eb99481ec77bcb26e904609dbfecfb1cf`.
+Both parse to the same fixed JSON judgments and produced identical rankings and
+metrics. Compare the declared input bytes/line endings when auditing checksums.
 
 The corpus records model `minishlab/potion-base-8M`, immutable revision
 `bf8b056651a2c21b8d2565580b8569da283cab23`, Model2Vec `0.9.0`, 256 dimensions,
