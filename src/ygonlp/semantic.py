@@ -102,7 +102,8 @@ def _read_artifact(metadata_path: Path, prefix: str, key_field: str,
         if (not isinstance(metadata, dict) or type(metadata.get("schema_version")) is not int
                 or metadata["schema_version"] != schema or metadata.get("completed") is not True):
             raise SemanticError("artifact metadata の schema または完了状態が不正です")
-        if expected is not None and any(metadata.get(k) != v for k, v in expected.items()):
+        if expected is not None and any(k not in metadata or type(metadata[k]) is not type(v)
+                                        or metadata[k] != v for k, v in expected.items()):
             raise SemanticError("artifact metadata が現在の入力・設定と一致しません")
         key = metadata.get(key_field)
         checksum, size = metadata.get("data_sha256"), metadata.get("data_size")
@@ -338,9 +339,15 @@ def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | No
               "query_embedding_data_sha256": query_metadata["data_sha256"] if query_metadata else None,
               "top_n": top_n, "filters": filters,
               "ranking_identifier": RANKING_IDENTIFIER, "matches": matches}
+    result_identity = {**result_payload,
+                       "source_preprocessing_metadata_sha256": metadata["source_preprocessing_metadata_sha256"],
+                       "source_preprocessing_data_sha256": metadata["source_preprocessing_data_sha256"],
+                       "model": spec.metadata(), "query_embedding_data_sha256":
+                       query_metadata["data_sha256"] if query_metadata else None,
+                       "result_count": len(matches), "data_format": "json"}
     metadata_path = output / f"semantic-search-{key[:16]}.metadata.json"
     try:
-        prior, prior_raw = _read_artifact(metadata_path, "semantic-search", "result_cache_key", RESULT_SCHEMA_VERSION, result_payload)
+        prior, prior_raw = _read_artifact(metadata_path, "semantic-search", "result_cache_key", RESULT_SCHEMA_VERSION, result_identity)
         hit = prior.get("data_format") == "json" and prior_raw == _json_bytes(result)
     except SemanticError:
         hit = False
@@ -349,12 +356,8 @@ def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | No
                 "data_path": output / prior["data_file"], "result": result}
     content = _json_bytes(result)
     data_path, metadata_path = _paths(output, "semantic-search", key, content, "json")
-    result_metadata = {**result_payload, "completed": True, "result_cache_key": key,
-                       "source_preprocessing_metadata_sha256": metadata["source_preprocessing_metadata_sha256"],
-                       "source_preprocessing_data_sha256": metadata["source_preprocessing_data_sha256"],
-                       "model": spec.metadata(), "query_embedding_data_sha256":
-                       query_metadata["data_sha256"] if query_metadata else None,
-                       "result_count": len(matches), "data_format": "json", "data_file": data_path.name,
+    result_metadata = {**result_identity, "completed": True, "result_cache_key": key,
+                       "data_file": data_path.name,
                        "data_sha256": _digest(content), "data_size": len(content)}
     _publish(data_path, metadata_path, content, result_metadata, writer)
     return {"status": "searched", "metadata_path": metadata_path,

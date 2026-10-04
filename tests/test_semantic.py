@@ -490,3 +490,35 @@ def test_zero_candidate_shortcut_validates_corpus_and_cli_success(tmp_path, monk
     assert cli.main(args) == 1
     assert "checksum" in capsys.readouterr().err
     assert not (tmp_path / "invalid-result").exists()
+
+
+@pytest.mark.parametrize("mode", ["card", "text", "empty"])
+@pytest.mark.parametrize("field", ["model", "source_preprocessing_metadata_sha256",
+                                  "source_preprocessing_data_sha256",
+                                  "query_embedding_data_sha256", "result_count"])
+@pytest.mark.parametrize("missing", [False, True])
+def test_result_cache_repairs_provenance_without_query_model(tmp_path, mode, field, missing):
+    _, embedded = corpus(tmp_path, Factory())
+    output = tmp_path / "results"
+    options = {"card_id": 1} if mode == "card" else {"query": "special summon"}
+    if mode == "empty":
+        options["race"] = "Unknown"
+    first = search_semantic(embedded["metadata_path"], output, spec=SPEC,
+                            embedder_factory=Factory(), **options)
+    original_metadata = json.loads(first["metadata_path"].read_bytes())
+    original_data = first["data_path"].read_bytes()
+    damaged = dict(original_metadata)
+    if missing:
+        damaged.pop(field)
+    else:
+        damaged[field] = {"model_id": "wrong"} if field == "model" else 999 if field == "result_count" else "0" * 64
+    first["metadata_path"].write_text(json.dumps(damaged), encoding="utf-8")
+    options.update(offline=True, spec=SPEC,
+                   embedder_factory=lambda: pytest.fail("metadata repair constructed query model"))
+    repaired = search_semantic(embedded["metadata_path"], output, **options)
+    assert repaired["status"] == "searched"
+    assert repaired["result"] == first["result"]
+    assert repaired["data_path"].read_bytes() == original_data
+    assert json.loads(repaired["metadata_path"].read_bytes()) == original_metadata
+    assert search_semantic(embedded["metadata_path"], output, **options)["status"] == "cache_hit"
+    assert search_semantic(embedded["metadata_path"], output, force=True, **options)["status"] == "searched"
