@@ -18,7 +18,7 @@ from .semantic_backend import DEFAULT_SPEC, Embedder, EmbeddingSpec, Model2VecEm
 
 CORPUS_SCHEMA_VERSION = 3
 QUERY_SCHEMA_VERSION = 1
-RESULT_SCHEMA_VERSION = 3
+RESULT_SCHEMA_VERSION = 4
 RANKING_IDENTIFIER = "cosine_raw_desc_card_id_asc_v1"
 SELECTION_IDENTIFIER = "is_effect_text_target_and_nonblank_text_normalized_v1"
 QUERY_NORMALIZATION = "collapse_unicode_whitespace_strip_v1"
@@ -278,8 +278,15 @@ def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | No
         if value is not None and (not isinstance(value, str) or not value):
             raise SemanticError(f"{name} は空でない文字列である必要があります")
     filters = {"card_type": card_type, "race": race}
+    normalized_query = normalize_query(query) if query is not None else None
     metadata, matrix = _load_corpus(embedding_metadata, spec)
     cards = metadata["cards"]
+    candidates = [index for index, card in enumerate(cards)
+                  if (card_id is None or card["card_id"] != card_id)
+                  and (card_type is None or card["card_type"] == card_type)
+                  and (race is None or card["race"] == race)]
+    query_key = None
+    query_metadata = None
     if card_id is not None:
         if type(card_id) is not int:
             raise SemanticError("card_id が不正です")
@@ -288,25 +295,27 @@ def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | No
             raise SemanticError("指定した card_id は embedding corpus にありません")
         query_vector = matrix[positions[0]]
         query_info = {"kind": "card_id", "value": card_id}
-        query_key = None
-        query_metadata = None
+        query_embedding_usage = "corpus_card"
     else:
-        query_vector, query_metadata, _ = _query_embedding(
-            query, output, spec, offline=offline, force=force,
-            embedder_factory=embedder_factory, writer=writer)
         query_info = {"kind": "text", "value": query,
-                      "normalized_value": normalize_query(query)}
-        query_key = query_metadata["query_cache_key"]
+                      "normalized_value": normalized_query}
+        if candidates:
+            query_vector, query_metadata, _ = _query_embedding(
+                query, output, spec, offline=offline, force=force,
+                embedder_factory=embedder_factory, writer=writer)
+            query_key = query_metadata["query_cache_key"]
+            query_embedding_usage = "query_cache"
+        else:
+            query_embedding_usage = "not_required_no_candidates"
 
-    if not len(cards):
+    if not candidates:
         ranked: list[tuple[float, dict[str, Any]]] = []
     else:
-        denominators = np.linalg.norm(matrix.astype(np.float64), axis=1) * np.linalg.norm(query_vector.astype(np.float64))
-        scores = matrix.astype(np.float64) @ query_vector.astype(np.float64) / denominators
-        ranked = sorted(((float(score), card) for score, card in zip(scores, cards)
-                         if (card_id is None or card["card_id"] != card_id)
-                         and (card_type is None or card["card_type"] == card_type)
-                         and (race is None or card["race"] == race)),
+        candidate_matrix = matrix[candidates].astype(np.float64)
+        vector = query_vector.astype(np.float64)
+        denominators = np.linalg.norm(candidate_matrix, axis=1) * np.linalg.norm(vector)
+        scores = candidate_matrix @ vector / denominators
+        ranked = sorted(((float(score), cards[index]) for score, index in zip(scores, candidates)),
                         key=lambda pair: (-pair[0], pair[1]["card_id"]))[:top_n]
     matches = [{**card, "score": round(score, 6)} for score, card in ranked]
     result_payload = {"schema_version": RESULT_SCHEMA_VERSION,
@@ -314,6 +323,7 @@ def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | No
                       "corpus_data_sha256": metadata["data_sha256"],
                       "corpus_cards_sha256": metadata["cards_sha256"],
                       "query": query_info, "query_embedding_cache_key": query_key,
+                      "query_embedding_usage": query_embedding_usage, "candidate_count": len(candidates),
                       "top_n": top_n, "filters": filters,
                       "ranking_identifier": RANKING_IDENTIFIER}
     key = _key(result_payload)
@@ -324,6 +334,7 @@ def search_semantic(embedding_metadata: Path, output: Path, *, card_id: int | No
               "source_preprocessing_data_sha256": metadata["source_preprocessing_data_sha256"],
               "model": spec.metadata(), "query": query_info,
               "query_embedding_cache_key": query_key,
+              "query_embedding_usage": query_embedding_usage, "candidate_count": len(candidates),
               "query_embedding_data_sha256": query_metadata["data_sha256"] if query_metadata else None,
               "top_n": top_n, "filters": filters,
               "ranking_identifier": RANKING_IDENTIFIER, "matches": matches}
