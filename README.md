@@ -273,6 +273,8 @@ card corpusは `effect-embeddings-<cache-key>-<content-checksum>.npy` と対応�
 
 意味的類似度はretrieval signalです。rules equivalence、card strength、combo compatibility、deck suitabilityを意味しません。TF-IDFの`search-similar`とは別の表現とscoreであり、相互比較しません。
 
+保存済みcorpus/query cacheだけを使うoffline比較は `scripts/evaluate_retrieval.py` で実行できます。semantic、TF-IDF、metadata filter、順位融合、限定的な数詞正規化を同じ固定queryで比較し、Recall@k / MRR@k / nDCG@kと入力checksumを記録します。文字列proxy、人工fixture、人間の意味判断が必要なqueryを区別し、productionの検索方式は変更しません。実行例、結果、悪化例と採用判断は[offline retrieval調査](docs/retrieval-evaluation.md)を参照してください。
+
 ## 語彙・探索的トピック分析
 
 `analyze-vocabulary` と `analyze-topics` は前処理metadataを完全検証した正規化JSONLだけを入力とし、API通信を行いません。空またはtokenなし文書を除外します。前者は scikit-learn `CountVectorizer` によるunigram/bigramの頻度・document frequency分析、後者は固定seedの `LatentDirichletAllocation` による探索的な語彙groupingです。
