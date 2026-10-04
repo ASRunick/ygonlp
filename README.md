@@ -273,6 +273,8 @@ card corpusは `effect-embeddings-<cache-key>-<content-checksum>.npy` と対応�
 
 意味的類似度はretrieval signalです。rules equivalence、card strength、combo compatibility、deck suitabilityを意味しません。TF-IDFの`search-similar`とは別の表現とscoreであり、相互比較しません。
 
+corpus schema 3はカード行metadata全体の `cards_sha256` を検証し、型が正しい `race` / `card_type` 等の破損も検索前に拒否します。`embed-effect-text` のcache再利用時は、検証済み前処理recordとカード行・件数を照合します。結果schema 3のcache keyとmetadataには `corpus_cards_sha256` を含めます。schema 1/2のcorpusは `embed-effect-text` で再生成してください。query embedding schema/cacheは変更しません。checksumは偶発的破損の検出であり、改ざん者の認証ではありません。
+
 保存済みcorpus/query cacheだけを使うoffline比較は `scripts/evaluate_retrieval.py` で実行できます。semantic、TF-IDF、metadata filter、順位融合、限定的な数詞正規化を同じ固定queryで比較し、Recall@k / MRR@k / nDCG@kと入力checksumを記録します。文字列proxy、人工fixture、人間の意味判断が必要なqueryを区別し、productionの検索方式は変更しません。実行例、結果、悪化例と採用判断は[offline retrieval調査](docs/retrieval-evaluation.md)を参照してください。
 
 ## 語彙・探索的トピック分析
