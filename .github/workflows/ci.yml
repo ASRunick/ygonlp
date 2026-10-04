@@ -4,9 +4,11 @@ on:
   pull_request:
     branches:
       - main
+      - codex/overnight-20261004
   push:
     branches:
       - main
+      - codex/overnight-20261004
 
 permissions:
   contents: read
