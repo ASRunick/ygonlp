@@ -117,8 +117,9 @@ def test_card_query_raw_ties_excludes_self_and_json_provenance(tmp_path):
                              card_id=2, top_n=3, spec=SPEC,
                              embedder_factory=lambda: pytest.fail("card query constructed model"))
     saved = json.loads(result["data_path"].read_text(encoding="utf-8"))
-    assert saved["schema_version"] == 3
+    assert saved["schema_version"] == 4
     assert saved["query"] == {"kind": "card_id", "value": 2}
+    assert saved["candidate_count"] == 2 and saved["query_embedding_usage"] == "corpus_card"
     assert [row["card_id"] for row in saved["matches"]] == [3, 1]
     assert saved["matches"][0]["score"] == 1.0
     assert saved["ranking_identifier"] == "cosine_raw_desc_card_id_asc_v1"
@@ -275,6 +276,7 @@ def test_natural_query_cache_reuse_exact_provenance_and_offline(tmp_path):
                              offline=True, spec=SPEC,
                              embedder_factory=lambda: pytest.fail("offline constructed model"))
     assert second["result"]["query"]["value"] == "special summon"
+    assert second["result"]["candidate_count"] == 3 and second["result"]["query_embedding_usage"] == "query_cache"
     assert len(list((output / "query-embeddings").glob("*.metadata.json"))) == 1
     assert json.loads(second["metadata_path"].read_text(encoding="utf-8"))["query_embedding_data_sha256"]
     assert search_semantic(embedded["metadata_path"], output, query="special summon",
@@ -422,3 +424,165 @@ def test_production_adapter_requests_pinned_snapshot_without_real_model(monkeypa
     assert calls["repo_id"] == backend.MODEL_ID
     assert calls["revision"] == backend.MODEL_REVISION
     assert "model.safetensors" in calls["allow_patterns"]
+
+
+@pytest.mark.parametrize("offline", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("filters", [{"race": "Unknown"}, {"card_type": "Spell Card", "race": "Warrior"}])
+def test_zero_candidates_skip_query_embeddings_and_preserve_provenance(tmp_path, monkeypatch, offline, force, filters):
+    import ygonlp.semantic as semantic
+    _, embedded = corpus(tmp_path, Factory())
+    monkeypatch.setattr(semantic, "_query_embedding", lambda *a, **kw: pytest.fail("zero candidates accessed query embedding"))
+    output = tmp_path / "results"
+    query = " \u2003new\n query\t "
+    result = search_semantic(embedded["metadata_path"], output, query=query, top_n=1, spec=SPEC,
+                             offline=offline, force=force, **filters)
+    saved = result["result"]
+    assert saved["schema_version"] == 4 and saved["matches"] == []
+    assert saved["candidate_count"] == 0 and saved["query_embedding_usage"] == "not_required_no_candidates"
+    assert saved["query_embedding_cache_key"] is None and saved["query_embedding_data_sha256"] is None
+    assert saved["query"] == {"kind": "text", "value": query, "normalized_value": "new query"}
+    assert saved["filters"] == {"card_type": filters.get("card_type"), "race": filters.get("race")}
+    assert not (output / "query-embeddings").exists()
+    metadata = json.loads(result["metadata_path"].read_text(encoding="utf-8"))
+    assert metadata["candidate_count"] == 0 and metadata["query_embedding_usage"] == "not_required_no_candidates"
+    again = search_semantic(embedded["metadata_path"], output, query=query, top_n=1, spec=SPEC,
+                            offline=offline, force=force, **filters)
+    assert again["status"] == ("searched" if force else "cache_hit")
+    assert again["result"] == saved
+
+
+def test_empty_corpus_and_self_exclusion_do_not_require_query_model(tmp_path):
+    empty_source = source(tmp_path, [card(1, "Empty", "")])
+    empty = embed_effect_text(empty_source, tmp_path / "empty-corpus", spec=SPEC,
+                              embedder_factory=lambda: pytest.fail("empty corpus constructed model"))
+    result = search_semantic(empty["metadata_path"], tmp_path / "empty-result", query="anything", offline=True,
+                             spec=SPEC, embedder_factory=lambda: pytest.fail("empty corpus query constructed model"))
+    assert result["result"]["matches"] == [] and result["result"]["candidate_count"] == 0
+    single_source = source(tmp_path, [card(1, "Draw", "draw a card")])
+    single = embed_effect_text(single_source, tmp_path / "single-corpus", spec=SPEC, embedder_factory=Factory())
+    own = search_semantic(single["metadata_path"], tmp_path / "self-result", card_id=1, spec=SPEC)
+    assert own["result"]["matches"] == [] and own["result"]["candidate_count"] == 0
+    assert own["result"]["query_embedding_usage"] == "corpus_card"
+
+
+@pytest.mark.parametrize("options", [{"query": " \n\t "}, {"query": "valid", "top_n": 0}, {"card_id": 999}])
+def test_zero_candidate_shortcut_does_not_bypass_invalid_input(tmp_path, monkeypatch, options):
+    import ygonlp.semantic as semantic
+    _, embedded = corpus(tmp_path, Factory())
+    monkeypatch.setattr(semantic, "_query_embedding", lambda *a, **kw: pytest.fail("invalid input accessed query embedding"))
+    output = tmp_path / "invalid-result"
+    with pytest.raises(SemanticError):
+        search_semantic(embedded["metadata_path"], output, race="Unknown", spec=SPEC, **options)
+    assert not output.exists()
+
+
+def test_zero_candidate_shortcut_validates_corpus_and_cli_success(tmp_path, monkeypatch, capsys):
+    _, embedded = corpus(tmp_path, Factory())
+    monkeypatch.setattr(cli, "search_semantic", lambda *a, **kw: search_semantic(*a, spec=SPEC,
+                        embedder_factory=lambda: pytest.fail("zero candidates constructed model"), **kw))
+    args = ["search-semantic", "--embedding-metadata", str(embedded["metadata_path"]), "--query", "not cached",
+            "--race", "Unknown", "--offline", "--output", str(tmp_path / "cli-result")]
+    assert cli.main(args) == 0
+    assert capsys.readouterr().err == ""
+    embedded["data_path"].write_bytes(b"corrupt")
+    args[-1] = str(tmp_path / "invalid-result")
+    assert cli.main(args) == 1
+    assert "checksum" in capsys.readouterr().err
+    assert not (tmp_path / "invalid-result").exists()
+
+
+@pytest.mark.parametrize("mode", ["card", "text", "empty"])
+@pytest.mark.parametrize("field", ["model", "source_preprocessing_metadata_sha256",
+                                  "source_preprocessing_data_sha256",
+                                  "query_embedding_data_sha256", "result_count"])
+@pytest.mark.parametrize("missing", [False, True])
+def test_result_cache_repairs_provenance_without_query_model(tmp_path, mode, field, missing):
+    _, embedded = corpus(tmp_path, Factory())
+    output = tmp_path / "results"
+    options = {"card_id": 1} if mode == "card" else {"query": "special summon"}
+    if mode == "empty":
+        options["race"] = "Unknown"
+    first = search_semantic(embedded["metadata_path"], output, spec=SPEC,
+                            embedder_factory=Factory(), **options)
+    original_metadata = json.loads(first["metadata_path"].read_bytes())
+    original_data = first["data_path"].read_bytes()
+    damaged = dict(original_metadata)
+    if missing:
+        damaged.pop(field)
+    else:
+        damaged[field] = {"model_id": "wrong"} if field == "model" else 999 if field == "result_count" else "0" * 64
+    first["metadata_path"].write_text(json.dumps(damaged), encoding="utf-8")
+    options.update(offline=True, spec=SPEC,
+                   embedder_factory=lambda: pytest.fail("metadata repair constructed query model"))
+    repaired = search_semantic(embedded["metadata_path"], output, **options)
+    assert repaired["status"] == "searched"
+    assert repaired["result"] == first["result"]
+    assert repaired["data_path"].read_bytes() == original_data
+    assert json.loads(repaired["metadata_path"].read_bytes()) == original_metadata
+    assert search_semantic(embedded["metadata_path"], output, **options)["status"] == "cache_hit"
+    assert search_semantic(embedded["metadata_path"], output, force=True, **options)["status"] == "searched"
+
+
+@pytest.mark.parametrize("stage", ["corpus", "query"])
+@pytest.mark.parametrize("error_type", [OSError, ValueError])
+def test_model_initialization_failure_is_controlled_and_preserves_artifacts(tmp_path, monkeypatch, capsys, stage, error_type):
+    input_metadata, embedded = corpus(tmp_path, Factory())
+    output = tmp_path / "results"
+    first = search_semantic(embedded["metadata_path"], output, query="special summon", spec=SPEC,
+                            embedder_factory=Factory())
+    protected = tmp_path / "embeddings" if stage == "corpus" else output
+    before = {path.relative_to(protected): path.read_bytes() for path in protected.rglob("*") if path.is_file()}
+    cause = error_type("fixture-only backend detail")
+
+    def unavailable():
+        raise cause
+
+    if stage == "corpus":
+        def invoke(**kwargs):
+            return embed_effect_text(input_metadata, tmp_path / "embeddings", spec=SPEC,
+                                      embedder_factory=unavailable, **kwargs)
+        monkeypatch.setattr(cli, "embed_effect_text", lambda *a, **kw: embed_effect_text(*a, spec=SPEC,
+                            embedder_factory=unavailable, **kw))
+        args = ["embed-effect-text", "--input-metadata", str(input_metadata), "--output", str(tmp_path / "embeddings"), "--force"]
+    else:
+        def invoke(**kwargs):
+            return search_semantic(embedded["metadata_path"], output, query="special summon", spec=SPEC,
+                                    embedder_factory=unavailable, **kwargs)
+        monkeypatch.setattr(cli, "search_semantic", lambda *a, **kw: search_semantic(*a, spec=SPEC,
+                            embedder_factory=unavailable, **kw))
+        args = ["search-semantic", "--embedding-metadata", str(embedded["metadata_path"]), "--query", "special summon",
+                "--output", str(output), "--force"]
+    with pytest.raises(SemanticError, match="初期化") as exc:
+        invoke(force=True)
+    assert exc.value.__cause__ is cause
+    assert cli.main(args) == 1
+    stderr = capsys.readouterr().err
+    assert "初期化" in stderr and "fixture-only backend detail" not in stderr and "Traceback" not in stderr
+    after = {path.relative_to(protected): path.read_bytes() for path in protected.rglob("*") if path.is_file()}
+    assert after == before
+    assert first["data_path"].exists()
+    fresh = tmp_path / "new-output"
+    args[args.index("--output") + 1] = str(fresh)
+    assert cli.main(args) == 1
+    assert not fresh.exists()
+    assert "初期化" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("stage", ["corpus", "query"])
+def test_model_initialization_preserves_actionable_runtime_error(tmp_path, stage):
+    input_metadata, embedded = corpus(tmp_path, Factory())
+    cause = RuntimeError("install optional semantic dependencies")
+
+    def unavailable():
+        raise cause
+
+    output = tmp_path / "new-output"
+    with pytest.raises(RuntimeError) as exc:
+        if stage == "corpus":
+            embed_effect_text(input_metadata, output, spec=SPEC, embedder_factory=unavailable)
+        else:
+            search_semantic(embedded["metadata_path"], output, query="uncached", spec=SPEC,
+                            embedder_factory=unavailable)
+    assert exc.value is cause
+    assert not output.exists()
