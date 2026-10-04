@@ -117,8 +117,9 @@ def test_card_query_raw_ties_excludes_self_and_json_provenance(tmp_path):
                              card_id=2, top_n=3, spec=SPEC,
                              embedder_factory=lambda: pytest.fail("card query constructed model"))
     saved = json.loads(result["data_path"].read_text(encoding="utf-8"))
-    assert saved["schema_version"] == 3
+    assert saved["schema_version"] == 4
     assert saved["query"] == {"kind": "card_id", "value": 2}
+    assert saved["candidate_count"] == 2 and saved["query_embedding_usage"] == "corpus_card"
     assert [row["card_id"] for row in saved["matches"]] == [3, 1]
     assert saved["matches"][0]["score"] == 1.0
     assert saved["ranking_identifier"] == "cosine_raw_desc_card_id_asc_v1"
@@ -275,6 +276,7 @@ def test_natural_query_cache_reuse_exact_provenance_and_offline(tmp_path):
                              offline=True, spec=SPEC,
                              embedder_factory=lambda: pytest.fail("offline constructed model"))
     assert second["result"]["query"]["value"] == "special summon"
+    assert second["result"]["candidate_count"] == 3 and second["result"]["query_embedding_usage"] == "query_cache"
     assert len(list((output / "query-embeddings").glob("*.metadata.json"))) == 1
     assert json.loads(second["metadata_path"].read_text(encoding="utf-8"))["query_embedding_data_sha256"]
     assert search_semantic(embedded["metadata_path"], output, query="special summon",
@@ -422,3 +424,69 @@ def test_production_adapter_requests_pinned_snapshot_without_real_model(monkeypa
     assert calls["repo_id"] == backend.MODEL_ID
     assert calls["revision"] == backend.MODEL_REVISION
     assert "model.safetensors" in calls["allow_patterns"]
+
+
+@pytest.mark.parametrize("offline", [False, True])
+@pytest.mark.parametrize("force", [False, True])
+@pytest.mark.parametrize("filters", [{"race": "Unknown"}, {"card_type": "Spell Card", "race": "Warrior"}])
+def test_zero_candidates_skip_query_embeddings_and_preserve_provenance(tmp_path, monkeypatch, offline, force, filters):
+    import ygonlp.semantic as semantic
+    _, embedded = corpus(tmp_path, Factory())
+    monkeypatch.setattr(semantic, "_query_embedding", lambda *a, **kw: pytest.fail("zero candidates accessed query embedding"))
+    output = tmp_path / "results"
+    query = " \u2003new\n query\t "
+    result = search_semantic(embedded["metadata_path"], output, query=query, top_n=1, spec=SPEC,
+                             offline=offline, force=force, **filters)
+    saved = result["result"]
+    assert saved["schema_version"] == 4 and saved["matches"] == []
+    assert saved["candidate_count"] == 0 and saved["query_embedding_usage"] == "not_required_no_candidates"
+    assert saved["query_embedding_cache_key"] is None and saved["query_embedding_data_sha256"] is None
+    assert saved["query"] == {"kind": "text", "value": query, "normalized_value": "new query"}
+    assert saved["filters"] == {"card_type": filters.get("card_type"), "race": filters.get("race")}
+    assert not (output / "query-embeddings").exists()
+    metadata = json.loads(result["metadata_path"].read_text(encoding="utf-8"))
+    assert metadata["candidate_count"] == 0 and metadata["query_embedding_usage"] == "not_required_no_candidates"
+    again = search_semantic(embedded["metadata_path"], output, query=query, top_n=1, spec=SPEC,
+                            offline=offline, force=force, **filters)
+    assert again["status"] == ("searched" if force else "cache_hit")
+    assert again["result"] == saved
+
+
+def test_empty_corpus_and_self_exclusion_do_not_require_query_model(tmp_path):
+    empty_source = source(tmp_path, [card(1, "Empty", "")])
+    empty = embed_effect_text(empty_source, tmp_path / "empty-corpus", spec=SPEC,
+                              embedder_factory=lambda: pytest.fail("empty corpus constructed model"))
+    result = search_semantic(empty["metadata_path"], tmp_path / "empty-result", query="anything", offline=True,
+                             spec=SPEC, embedder_factory=lambda: pytest.fail("empty corpus query constructed model"))
+    assert result["result"]["matches"] == [] and result["result"]["candidate_count"] == 0
+    single_source = source(tmp_path, [card(1, "Draw", "draw a card")])
+    single = embed_effect_text(single_source, tmp_path / "single-corpus", spec=SPEC, embedder_factory=Factory())
+    own = search_semantic(single["metadata_path"], tmp_path / "self-result", card_id=1, spec=SPEC)
+    assert own["result"]["matches"] == [] and own["result"]["candidate_count"] == 0
+    assert own["result"]["query_embedding_usage"] == "corpus_card"
+
+
+@pytest.mark.parametrize("options", [{"query": " \n\t "}, {"query": "valid", "top_n": 0}, {"card_id": 999}])
+def test_zero_candidate_shortcut_does_not_bypass_invalid_input(tmp_path, monkeypatch, options):
+    import ygonlp.semantic as semantic
+    _, embedded = corpus(tmp_path, Factory())
+    monkeypatch.setattr(semantic, "_query_embedding", lambda *a, **kw: pytest.fail("invalid input accessed query embedding"))
+    output = tmp_path / "invalid-result"
+    with pytest.raises(SemanticError):
+        search_semantic(embedded["metadata_path"], output, race="Unknown", spec=SPEC, **options)
+    assert not output.exists()
+
+
+def test_zero_candidate_shortcut_validates_corpus_and_cli_success(tmp_path, monkeypatch, capsys):
+    _, embedded = corpus(tmp_path, Factory())
+    monkeypatch.setattr(cli, "search_semantic", lambda *a, **kw: search_semantic(*a, spec=SPEC,
+                        embedder_factory=lambda: pytest.fail("zero candidates constructed model"), **kw))
+    args = ["search-semantic", "--embedding-metadata", str(embedded["metadata_path"]), "--query", "not cached",
+            "--race", "Unknown", "--offline", "--output", str(tmp_path / "cli-result")]
+    assert cli.main(args) == 0
+    assert capsys.readouterr().err == ""
+    embedded["data_path"].write_bytes(b"corrupt")
+    args[-1] = str(tmp_path / "invalid-result")
+    assert cli.main(args) == 1
+    assert "checksum" in capsys.readouterr().err
+    assert not (tmp_path / "invalid-result").exists()
